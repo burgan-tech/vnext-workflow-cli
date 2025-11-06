@@ -337,19 +337,21 @@ jobs:
               echo "💡 Tip: Use 'force_publish: true' to republish existing versions"
             else
               # Try to publish - handle case where package doesn't exist yet
-              if npm publish --access public 2>&1; then
+              PUBLISH_OUTPUT=$(npm publish --access public 2>&1) || PUBLISH_EXIT_CODE=$?
+              if [ -z "$PUBLISH_EXIT_CODE" ] || [ "$PUBLISH_EXIT_CODE" -eq 0 ]; then
                 echo "✅ Successfully published to NPM"
                 PUBLISHED=true
                 SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
               else
-                PUBLISH_ERROR=$(npm publish --access public 2>&1 || true)
-                if echo "$PUBLISH_ERROR" | grep -q "404.*Not found"; then
+                if echo "$PUBLISH_OUTPUT" | grep -q "404.*Not found"; then
                   echo "⚠️  Package or scope may not exist on NPM yet"
                   echo "💡 Tip: Ensure the package scope '@burgan-tech' is created on NPM"
                   echo "💡 Or publish manually once to create the package"
+                  echo "Error details:"
+                  echo "$PUBLISH_OUTPUT"
                 else
                   echo "❌ Failed to publish to NPM"
-                  echo "$PUBLISH_ERROR"
+                  echo "$PUBLISH_OUTPUT"
                 fi
               fi
             fi

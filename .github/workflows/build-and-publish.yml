@@ -138,10 +138,29 @@ jobs:
     - name: Update version in package.json
       run: |
         VERSION="${{ steps.version.outputs.version }}"
-        npm version "$VERSION" --no-git-tag-version
-        echo "Updated package.json with version $VERSION"
+        CURRENT_VERSION=$(node -p "require('./package.json').version")
+        
+        echo "Current version in package.json: $CURRENT_VERSION"
+        echo "Target version: $VERSION"
+        
+        if [ "$CURRENT_VERSION" == "$VERSION" ]; then
+          echo "✅ Version is already $VERSION, skipping version update"
+        else
+          echo "Updating version from $CURRENT_VERSION to $VERSION..."
+          npm version "$VERSION" --no-git-tag-version || {
+            echo "⚠️  npm version failed, trying manual update..."
+            # Fallback: manually update package.json
+            node -e "const fs = require('fs'); const pkg = require('./package.json'); pkg.version = '$VERSION'; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');"
+            echo "✅ Manually updated package.json with version $VERSION"
+          }
+        fi
+        
+        # Verify the version was set correctly
+        FINAL_VERSION=$(node -p "require('./package.json').version")
+        echo "Final version in package.json: $FINAL_VERSION"
         
         # Show the updated version info
+        echo ""
         echo "Package details:"
         if command -v jq &> /dev/null; then
           cat package.json | jq '.name, .version, .description'

@@ -333,7 +333,7 @@ jobs:
             PACKAGE_EXISTS=true
             echo "✅ Package exists on NPM"
           else
-            echo "ℹ️  Package does not exist on NPM yet (first publish)"
+            echo "ℹ️  Package does not exist on NPM yet - will create it on first publish"
           fi
           
           if [ "$FORCE_PUBLISH" == "true" ]; then
@@ -346,15 +346,31 @@ jobs:
               echo "⚠️  NPM publish failed"
             fi
           else
-            # Check if version already exists
-            if [ "$PACKAGE_EXISTS" == "true" ] && npm view "$PACKAGE_NAME@$VERSION" version > /dev/null 2>&1; then
-              echo "❌ Version $VERSION already exists on NPM"
-              echo "💡 Tip: Use 'force_publish: true' to republish existing versions"
+            # Check if version already exists (only if package exists)
+            VERSION_EXISTS=false
+            if [ "$PACKAGE_EXISTS" == "true" ]; then
+              if npm view "$PACKAGE_NAME@$VERSION" version > /dev/null 2>&1; then
+                VERSION_EXISTS=true
+                echo "❌ Version $VERSION already exists on NPM"
+                echo "💡 Tip: Use 'force_publish: true' to republish existing versions"
+              fi
+            fi
+            
+            if [ "$VERSION_EXISTS" == "true" ]; then
+              echo "Skipping publish - version already exists"
             else
-              # Try to publish
-              echo "Publishing version $VERSION..."
+              # Try to publish (will create package if it doesn't exist)
+              if [ "$PACKAGE_EXISTS" == "false" ]; then
+                echo "📦 Creating new package on NPM..."
+              else
+                echo "📦 Publishing version $VERSION..."
+              fi
+              
               if npm publish --access public; then
                 echo "✅ Successfully published to NPM"
+                if [ "$PACKAGE_EXISTS" == "false" ]; then
+                  echo "🎉 Package created successfully!"
+                fi
                 PUBLISHED=true
                 SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
               else
@@ -371,6 +387,9 @@ jobs:
                 echo "2. Ensure the scope exists and you have publish permissions"
                 echo "3. Create a new NPM token with 'Automation' type at https://www.npmjs.com/settings/burgan-tech/tokens"
                 echo "4. Update the NPM_TOKEN secret in GitHub repository settings"
+                echo ""
+                echo "Note: npm publish should automatically create the package if it doesn't exist."
+                echo "If you get a 404 error, it's usually a permissions issue with the NPM_TOKEN."
                 exit 1
               fi
             fi

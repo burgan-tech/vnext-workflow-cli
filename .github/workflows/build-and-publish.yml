@@ -115,7 +115,11 @@ jobs:
         
         # Show the updated version info
         echo "Package details:"
-        cat package.json | jq '.name, .version, .description'
+        if command -v jq &> /dev/null; then
+          cat package.json | jq '.name, .version, .description'
+        else
+          node -p "const pkg = require('./package.json'); console.log('Name:', pkg.name); console.log('Version:', pkg.version); console.log('Description:', pkg.description);"
+        fi
     
     - name: Install dependencies
       run: |
@@ -148,16 +152,31 @@ jobs:
         
         # Check all source files for syntax errors
         echo "Checking source files for syntax errors..."
-        for js_file in src/**/*.js; do
-          if [ -f "$js_file" ]; then
+        # Enable globstar for recursive globbing
+        shopt -s globstar 2>/dev/null || true
+        # Use find as fallback if globstar doesn't work
+        if shopt -q globstar 2>/dev/null; then
+          for js_file in src/**/*.js; do
+            if [ -f "$js_file" ]; then
+              if node -c "$js_file"; then
+                echo "✅ Valid syntax: $js_file"
+              else
+                echo "❌ Invalid syntax: $js_file"
+                exit 1
+              fi
+            fi
+          done
+        else
+          # Fallback to find command
+          find src -name "*.js" -type f | while read -r js_file; do
             if node -c "$js_file"; then
               echo "✅ Valid syntax: $js_file"
             else
               echo "❌ Invalid syntax: $js_file"
               exit 1
             fi
-          fi
-        done
+          done
+        fi
         
         echo "All files have valid JavaScript syntax"
     

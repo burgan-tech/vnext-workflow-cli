@@ -55,6 +55,8 @@ jobs:
     - name: Calculate version
       id: version
       run: |
+        PACKAGE_NAME=$(node -p "require('./package.json').name")
+        
         # Check if version is manually provided
         if [ -n "${{ github.event.inputs.version_override }}" ]; then
           VERSION="${{ github.event.inputs.version_override }}"
@@ -67,27 +69,36 @@ jobs:
             BASE_VERSION="${BASH_REMATCH[1]}"
             echo "Base version from branch: $BASE_VERSION"
             
+            # Check NPM for the latest published version matching this base version
+            LATEST_NPM_VERSION=""
+            if npm view "$PACKAGE_NAME" versions --json > /dev/null 2>&1; then
+              # Get all versions from NPM and find the latest matching the base version
+              NPM_VERSIONS=$(npm view "$PACKAGE_NAME" versions --json 2>/dev/null | grep -o "\"${BASE_VERSION}\.[0-9]*\"" | sed 's/"//g' | sort -V | tail -1)
+              if [ -n "$NPM_VERSIONS" ]; then
+                LATEST_NPM_VERSION="$NPM_VERSIONS"
+                echo "Latest published version on NPM: $LATEST_NPM_VERSION"
+              fi
+            fi
+            
             # Find the next available patch version
-            PATCH=0
-            while true; do
+            if [ -n "$LATEST_NPM_VERSION" ]; then
+              # Extract patch version from latest NPM version and increment
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_NPM_VERSION"
+              PATCH=$((PATCH + 1))
+              VERSION="${MAJOR}.${MINOR}.${PATCH}"
+              echo "Incremented from latest NPM version: $VERSION"
+            else
+              # No version found on NPM, start from patch 0
+              PATCH=0
               VERSION="${BASE_VERSION}.${PATCH}"
-              TAG="v${VERSION}"
-              
-              # Check if this tag already exists
-              if git tag -l "$TAG" | grep -q "^$TAG$"; then
-                echo "Version $VERSION already exists, trying next patch version..."
-                PATCH=$((PATCH + 1))
-              else
-                echo "Found available version: $VERSION"
-                break
-              fi
-              
-              # Safety check to prevent infinite loop
-              if [ $PATCH -gt 100 ]; then
-                echo "Error: Could not find available patch version after 100 attempts"
-                exit 1
-              fi
-            done
+              echo "No existing version on NPM, starting with: $VERSION"
+            fi
+            
+            # Verify the version doesn't exist as a git tag
+            TAG="v${VERSION}"
+            if git tag -l "$TAG" | grep -q "^$TAG$"; then
+              echo "⚠️  Warning: Version $VERSION exists as git tag, but continuing with NPM version..."
+            fi
           else
             # Fallback to version from package.json and increment patch
             echo "Branch name doesn't match release-vX.Y pattern, using version from package.json"
@@ -98,11 +109,26 @@ jobs:
               exit 1
             fi
             
-            # Split version into parts and increment patch
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
-            PATCH=$((PATCH + 1))
-            VERSION="${MAJOR}.${MINOR}.${PATCH}"
-            echo "Incremented version: $VERSION"
+            # Check NPM for latest version
+            LATEST_NPM_VERSION=""
+            if npm view "$PACKAGE_NAME" version > /dev/null 2>&1; then
+              LATEST_NPM_VERSION=$(npm view "$PACKAGE_NAME" version 2>/dev/null)
+              echo "Latest published version on NPM: $LATEST_NPM_VERSION"
+            fi
+            
+            if [ -n "$LATEST_NPM_VERSION" ]; then
+              # Use NPM version and increment patch
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_NPM_VERSION"
+              PATCH=$((PATCH + 1))
+              VERSION="${MAJOR}.${MINOR}.${PATCH}"
+              echo "Incremented from latest NPM version: $VERSION"
+            else
+              # No NPM version, increment from package.json
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+              PATCH=$((PATCH + 1))
+              VERSION="${MAJOR}.${MINOR}.${PATCH}"
+              echo "Incremented from package.json version: $VERSION"
+            fi
           fi
         fi
         
@@ -112,14 +138,8 @@ jobs:
     - name: Update version in package.json
       run: |
         VERSION="${{ steps.version.outputs.version }}"
-        CURRENT_VERSION=$(node -p "require('./package.json').version")
-        
-        if [ "$CURRENT_VERSION" == "$VERSION" ]; then
-          echo "Version is already $VERSION, skipping version update"
-        else
-          npm version "$VERSION" --no-git-tag-version
-          echo "Updated package.json with version $VERSION"
-        fi
+        npm version "$VERSION" --no-git-tag-version
+        echo "Updated package.json with version $VERSION"
         
         # Show the updated version info
         echo "Package details:"
@@ -316,12 +336,21 @@ jobs:
               echo "❌ Version $VERSION already exists on NPM"
               echo "💡 Tip: Use 'force_publish: true' to republish existing versions"
             else
-              if npm publish --access public; then
+              # Try to publish - handle case where package doesn't exist yet
+              if npm publish --access public 2>&1; then
                 echo "✅ Successfully published to NPM"
                 PUBLISHED=true
                 SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
               else
-                echo "❌ Failed to publish to NPM"
+                PUBLISH_ERROR=$(npm publish --access public 2>&1 || true)
+                if echo "$PUBLISH_ERROR" | grep -q "404.*Not found"; then
+                  echo "⚠️  Package or scope may not exist on NPM yet"
+                  echo "💡 Tip: Ensure the package scope '@burgan-tech' is created on NPM"
+                  echo "💡 Or publish manually once to create the package"
+                else
+                  echo "❌ Failed to publish to NPM"
+                  echo "$PUBLISH_ERROR"
+                fi
               fi
             fi
           fi

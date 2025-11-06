@@ -1,0 +1,44 @@
+{
+  "name": "@burgan-tech/vnext-workflow-cli",
+  "version": "1.0.0",
+  "description": "vNext Workflow Manager - CLI tool for managing workflows, tasks, schemas and more",
+  "main": "dist/index.js",
+  "bin": {
+    "workflow": "./bin/workflow.js",
+    "wf": "./bin/workflow.js"
+  },
+  "scripts": {
+    "dev": "node bin/workflow.js",
+    "build": "echo 'Build not needed for now'",
+    "start": "node bin/workflow.js"
+  },
+  "keywords": [
+    "workflow",
+    "vnext",
+    "cli",
+    "automation"
+  ],
+  "author": "Burgan Tech",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/burgan-tech/vnext-workflow-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/burgan-tech/vnext-workflow-cli/issues"
+  },
+  "homepage": "https://github.com/burgan-tech/vnext-workflow-cli#readme",
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "dependencies": {
+    "commander": "^11.1.0",
+    "chalk": "^4.1.2",
+    "axios": "^1.6.2",
+    "pg": "^8.11.3",
+    "glob": "^10.3.10",
+    "inquirer": "^8.2.6",
+    "ora": "^5.4.1",
+    "conf": "^10.2.0"
+  }
+}

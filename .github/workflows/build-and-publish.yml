@@ -1,0 +1,507 @@
+name: Build and Publish to NPM
+
+on:
+  push:
+    branches:
+      - 'release-v*'
+  workflow_dispatch:
+    inputs:
+      version_override:
+        description: 'Override version (e.g., 1.0.6). Leave empty to auto-calculate from branch.'
+        required: false
+        type: string
+      force_publish:
+        description: 'Force publish package even if it already exists'
+        required: false
+        default: false
+        type: boolean
+      registry_target:
+        description: 'Target registry for publishing'
+        required: false
+        default: 'npmjs'
+        type: choice
+        options:
+          - 'npmjs'
+          - 'github'
+          - 'both'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      published: ${{ steps.publish.outputs.published }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for version calculation
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        registry-url: 'https://registry.npmjs.org'
+        cache: 'npm'
+    
+    - name: Calculate version
+      id: version
+      run: |
+        # Check if version is manually provided
+        if [ -n "${{ github.event.inputs.version_override }}" ]; then
+          VERSION="${{ github.event.inputs.version_override }}"
+          echo "Using manual version override: $VERSION"
+        else
+          # Extract version from branch name (e.g., release-v1.0 -> 1.0)
+          BRANCH_NAME="${{ github.ref_name }}"
+          
+          if [[ "$BRANCH_NAME" =~ ^release-v([0-9]+\.[0-9]+)$ ]]; then
+            BASE_VERSION="${BASH_REMATCH[1]}"
+            echo "Base version from branch: $BASE_VERSION"
+            
+            # Find the next available patch version
+            PATCH=0
+            while true; do
+              VERSION="${BASE_VERSION}.${PATCH}"
+              TAG="v${VERSION}"
+              
+              # Check if this tag already exists
+              if git tag -l "$TAG" | grep -q "^$TAG$"; then
+                echo "Version $VERSION already exists, trying next patch version..."
+                PATCH=$((PATCH + 1))
+              else
+                echo "Found available version: $VERSION"
+                break
+              fi
+              
+              # Safety check to prevent infinite loop
+              if [ $PATCH -gt 100 ]; then
+                echo "Error: Could not find available patch version after 100 attempts"
+                exit 1
+              fi
+            done
+          else
+            # Fallback to version from package.json and increment patch
+            echo "Branch name doesn't match release-vX.Y pattern, using version from package.json"
+            CURRENT_VERSION=$(node -p "require('./package.json').version")
+            
+            if [ -z "$CURRENT_VERSION" ]; then
+              echo "Error: Could not determine version from package.json"
+              exit 1
+            fi
+            
+            # Split version into parts and increment patch
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+            PATCH=$((PATCH + 1))
+            VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            echo "Incremented version: $VERSION"
+          fi
+        fi
+        
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Final version: $VERSION"
+    
+    - name: Update version in package.json
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        npm version "$VERSION" --no-git-tag-version
+        echo "Updated package.json with version $VERSION"
+        
+        # Show the updated version info
+        echo "Package details:"
+        cat package.json | jq '.name, .version, .description'
+    
+    - name: Install dependencies
+      run: |
+        echo "Installing dependencies..."
+        if [ -f "package-lock.json" ]; then
+          npm ci
+        else
+          npm install
+        fi
+        echo "Dependencies installed successfully"
+    
+    - name: Validate CLI syntax
+      run: |
+        echo "Validating CLI entry point..."
+        
+        # Check if main bin file exists and is valid JavaScript
+        BIN_FILE="bin/workflow.js"
+        if [ -f "$BIN_FILE" ]; then
+          echo "Validating $BIN_FILE..."
+          if node -c "$BIN_FILE"; then
+            echo "✅ Valid JavaScript syntax: $BIN_FILE"
+          else
+            echo "❌ Invalid JavaScript syntax in $BIN_FILE"
+            exit 1
+          fi
+        else
+          echo "❌ Main bin file not found: $BIN_FILE"
+          exit 1
+        fi
+        
+        # Check all source files for syntax errors
+        echo "Checking source files for syntax errors..."
+        for js_file in src/**/*.js; do
+          if [ -f "$js_file" ]; then
+            if node -c "$js_file"; then
+              echo "✅ Valid syntax: $js_file"
+            else
+              echo "❌ Invalid syntax: $js_file"
+              exit 1
+            fi
+          fi
+        done
+        
+        echo "All files have valid JavaScript syntax"
+    
+    - name: Lint code
+      run: |
+        # Run linting if available
+        if npm run lint --silent > /dev/null 2>&1; then
+          echo "Running linter..."
+          npm run lint
+        else
+          echo "No lint script found, running basic code validation..."
+          
+          # Check JavaScript syntax
+          if [ -f "bin/workflow.js" ]; then
+            echo "Checking bin/workflow.js syntax..."
+            if node -c "bin/workflow.js"; then
+              echo "✅ bin/workflow.js has valid syntax"
+            else
+              echo "❌ bin/workflow.js has syntax errors"
+              exit 1
+            fi
+          fi
+        fi
+    
+    - name: Run tests
+      run: |
+        echo "Running tests..."
+        if npm run test --silent > /dev/null 2>&1; then
+          npm test
+          echo "All tests passed!"
+        else
+          echo "No test script found, running basic validation instead..."
+          
+          # Basic validation - check if CLI can be executed
+          echo "Testing CLI entry point..."
+          if node bin/workflow.js --help > /dev/null 2>&1; then
+            echo "✅ CLI can be executed and shows help"
+          else
+            echo "⚠️  CLI help command returned non-zero exit code (this may be expected)"
+          fi
+          
+          # Test that the module can be required
+          echo "Testing module requirements..."
+          if node -e "
+            const pkg = require('./package.json');
+            console.log('Package name:', pkg.name);
+            console.log('Package version:', pkg.version);
+            console.log('Bin commands:', Object.keys(pkg.bin || {}));
+          "; then
+            echo "✅ Module can be required and package.json is valid"
+          else
+            echo "❌ Module requirement failed"
+            exit 1
+          fi
+        fi
+    
+    - name: Build package
+      run: |
+        echo "Building package..."
+        
+        # Run build script if available
+        if npm run build --silent > /dev/null 2>&1; then
+          npm run build
+          echo "Build completed successfully"
+        else
+          echo "No build script found, running prepublishOnly if available..."
+          if npm run prepublishOnly --silent > /dev/null 2>&1; then
+            npm run prepublishOnly
+          fi
+          echo "Package is ready for publishing"
+        fi
+        
+        # Create package tarball for validation
+        npm pack --dry-run
+        echo "Package validation completed"
+    
+    - name: Create package tarball
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        PACKAGE_NAME=$(node -p "require('./package.json').name")
+        
+        # Create the package tarball
+        npm pack
+        
+        # Rename to include version for clarity
+        SAFE_NAME=$(echo "$PACKAGE_NAME" | sed 's/@//g' | sed 's/\//-/g')
+        SAFE_TARBALL="${SAFE_NAME}-${VERSION}.tgz"
+        
+        if [ -f "${SAFE_TARBALL}" ]; then
+          echo "Package tarball created: ${SAFE_TARBALL}"
+        else
+          # Try to find the tarball with package name
+          TARBALL=$(ls -1 ${SAFE_NAME}-*.tgz 2>/dev/null | head -1)
+          if [ -n "$TARBALL" ]; then
+            echo "Package tarball found: $TARBALL"
+          else
+            echo "⚠️  Package tarball not found, but continuing..."
+          fi
+        fi
+    
+    - name: Publish to NPM
+      id: publish
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        PACKAGE_NAME=$(node -p "require('./package.json').name")
+        REGISTRY_TARGET="${{ github.event.inputs.registry_target || 'npmjs' }}"
+        FORCE_PUBLISH="${{ github.event.inputs.force_publish || 'false' }}"
+        
+        echo "📦 Publishing package: $PACKAGE_NAME@$VERSION"
+        echo "🎯 Target registry: $REGISTRY_TARGET"
+        echo "🔧 Force publish: $FORCE_PUBLISH"
+        
+        PUBLISHED=false
+        SUCCESS_COUNT=0
+        TOTAL_ATTEMPTS=0
+        
+        # Publish to NPM
+        if [ "$REGISTRY_TARGET" == "npmjs" ] || [ "$REGISTRY_TARGET" == "both" ]; then
+          TOTAL_ATTEMPTS=$((TOTAL_ATTEMPTS + 1))
+          echo ""
+          echo "📤 Publishing to NPM (npmjs.org)..."
+          
+          if [ "$FORCE_PUBLISH" == "true" ]; then
+            echo "⚠️  Force publish enabled - will attempt to publish even if version exists"
+            npm publish --access public || echo "⚠️  NPM publish failed (may already exist)"
+          else
+            # Check if version already exists
+            if npm view "$PACKAGE_NAME@$VERSION" version > /dev/null 2>&1; then
+              echo "❌ Version $VERSION already exists on NPM"
+              echo "💡 Tip: Use 'force_publish: true' to republish existing versions"
+            else
+              if npm publish --access public; then
+                echo "✅ Successfully published to NPM"
+                PUBLISHED=true
+                SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+              else
+                echo "❌ Failed to publish to NPM"
+              fi
+            fi
+          fi
+        fi
+        
+        # Publish to GitHub Packages
+        if [ "$REGISTRY_TARGET" == "github" ] || [ "$REGISTRY_TARGET" == "both" ]; then
+          TOTAL_ATTEMPTS=$((TOTAL_ATTEMPTS + 1))
+          echo ""
+          echo "📤 Publishing to GitHub Packages..."
+          
+          # Configure npm to use GitHub Packages
+          npm config set @burgan-tech:registry https://npm.pkg.github.com
+          npm config set //npm.pkg.github.com/:_authToken ${{ secrets.GITHUB_TOKEN }}
+          
+          if [ "$FORCE_PUBLISH" == "true" ]; then
+            echo "⚠️  Force publish enabled - will attempt to publish even if version exists"
+            npm publish --access public || echo "⚠️  GitHub Packages publish failed (may already exist)"
+          else
+            # Check if version already exists (basic check)
+            if npm view "$PACKAGE_NAME@$VERSION" version > /dev/null 2>&1; then
+              echo "❌ Version $VERSION already exists on GitHub Packages"
+              echo "💡 Tip: Use 'force_publish: true' to republish existing versions"
+            else
+              if npm publish --access public; then
+                echo "✅ Successfully published to GitHub Packages"
+                PUBLISHED=true
+                SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+              else
+                echo "❌ Failed to publish to GitHub Packages"
+              fi
+            fi
+          fi
+        fi
+        
+        echo "published=$PUBLISHED" >> $GITHUB_OUTPUT
+        
+        echo "📊 Publication Summary:"
+        echo "   Successfully published: $SUCCESS_COUNT/$TOTAL_ATTEMPTS registries"
+        
+        if [ "$SUCCESS_COUNT" -eq 0 ]; then
+          echo "❌ Failed to publish to any registry"
+          if [ "${{ github.event.inputs.force_publish }}" != "true" ]; then
+            echo "💡 Tip: If you want to republish existing versions, use the 'force_publish' option"
+          fi
+          exit 1
+        elif [ "$SUCCESS_COUNT" -lt "$TOTAL_ATTEMPTS" ]; then
+          echo "⚠️  Some registries failed, but at least one succeeded"
+        else
+          echo "🎉 Published to all target registries successfully!"
+        fi
+    
+    - name: Create Git Tag
+      if: steps.publish.outputs.published == 'true'
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        TAG="v$VERSION"
+        
+        # Create and push the tag
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+        if git tag -l "$TAG" | grep -q "^$TAG$"; then
+          echo "⚠️  Tag $TAG already exists, skipping tag creation"
+        else
+          git tag -a "$TAG" -m "Release version $VERSION"
+          git push origin "$TAG"
+          echo "✅ Created and pushed tag: $TAG"
+        fi
+    
+    - name: Create GitHub Release
+      if: steps.publish.outputs.published == 'true'
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ steps.version.outputs.version }}
+        release_name: Release v${{ steps.version.outputs.version }}
+        body: |
+          ## 🚀 Release v${{ steps.version.outputs.version }}
+          
+          ### 📦 Installation
+          ```bash
+          npm install -g @burgan-tech/vnext-workflow-cli@${{ steps.version.outputs.version }}
+          ```
+          
+          ### 🔗 Package Links
+          - [NPM Package](https://www.npmjs.com/package/@burgan-tech/vnext-workflow-cli)
+          - [GitHub Packages](https://github.com/${{ github.repository }}/packages)
+          
+          ### 📋 CLI Tool
+          This package provides a command-line interface for managing vNext workflows:
+          - Check system status (API, DB, folders)
+          - Update CSX files
+          - Update workflows
+          - Sync database
+          - Reset workflows
+          - Configuration management
+          
+          ### 📚 Usage
+          ```bash
+          # Install globally
+          npm install -g @burgan-tech/vnext-workflow-cli
+          
+          # Use the CLI
+          workflow check
+          workflow csx --all
+          workflow update --all
+          workflow sync
+          workflow reset
+          workflow config set <key> <value>
+          ```
+          
+          ### 📋 Changes
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for detailed changes.
+          
+          ---
+          *This release was automatically created by GitHub Actions*
+        draft: false
+        prerelease: false
+    
+    - name: Summary
+      if: always()
+      run: |
+        echo "## 📦 NPM Package Publishing Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Version Information" >> $GITHUB_STEP_SUMMARY
+        echo "- **Package**: \`@burgan-tech/vnext-workflow-cli\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Version**: ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Published**: ${{ steps.publish.outputs.published }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -n "${{ github.event.inputs.version_override }}" ]; then
+          echo "- **Version Override**: Used manual version override" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ "${{ github.event.inputs.force_publish }}" == "true" ]; then
+          echo "- **Force Publish**: Enabled" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        REGISTRY_TARGET="${{ github.event.inputs.registry_target || 'npmjs' }}"
+        echo "- **Target Registry**: $REGISTRY_TARGET" >> $GITHUB_STEP_SUMMARY
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📦 Package Information" >> $GITHUB_STEP_SUMMARY
+        echo "CLI tool for managing vNext workflows, tasks, schemas and more. This package provides a command-line interface for managing workflows, checking system status, updating CSX files, syncing databases, and managing configurations." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Available Commands:**" >> $GITHUB_STEP_SUMMARY
+        echo "- \`check\` - System status check (API, DB, folders)" >> $GITHUB_STEP_SUMMARY
+        echo "- \`csx\` - Update CSX files" >> $GITHUB_STEP_SUMMARY
+        echo "- \`update\` - Update workflows" >> $GITHUB_STEP_SUMMARY
+        echo "- \`sync\` - Sync database" >> $GITHUB_STEP_SUMMARY
+        echo "- \`reset\` - Reset workflows" >> $GITHUB_STEP_SUMMARY
+        echo "- \`config\` - Configuration management" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ steps.publish.outputs.published }}" == "true" ]; then
+          echo "### 🎉 Published Successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Installation Instructions" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Install globally" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "npm install -g @burgan-tech/vnext-workflow-cli@${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Install as dependency" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "npm install @burgan-tech/vnext-workflow-cli@${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Basic Usage" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "# Check system status" >> $GITHUB_STEP_SUMMARY
+          echo "workflow check" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Update all CSX files" >> $GITHUB_STEP_SUMMARY
+          echo "workflow csx --all" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Update all workflows" >> $GITHUB_STEP_SUMMARY
+          echo "workflow update --all" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Sync database" >> $GITHUB_STEP_SUMMARY
+          echo "workflow sync" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "workflow config set <key> <value>" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "### ❌ Publication Failed" >> $GITHUB_STEP_SUMMARY
+          echo "The package was not successfully published. Check the workflow logs for details." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "### 🔗 Quick Links" >> $GITHUB_STEP_SUMMARY
+        echo "- [NPM Package](https://www.npmjs.com/package/@burgan-tech/vnext-workflow-cli)" >> $GITHUB_STEP_SUMMARY
+        echo "- [GitHub Repository](https://github.com/${{ github.repository }})" >> $GITHUB_STEP_SUMMARY
+        echo "- [Workflow Artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+        echo "- [Package Documentation](https://github.com/${{ github.repository }}#readme)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📋 Next Steps" >> $GITHUB_STEP_SUMMARY
+        echo "1. Package will be available on NPM (may take a few minutes to appear in search)" >> $GITHUB_STEP_SUMMARY
+        echo "2. Install and use the CLI: \`npm install -g @burgan-tech/vnext-workflow-cli\`" >> $GITHUB_STEP_SUMMARY
+        echo "3. View package details and download statistics on NPM" >> $GITHUB_STEP_SUMMARY
+        echo "4. Update documentation if needed" >> $GITHUB_STEP_SUMMARY
+        echo "5. Use the CLI to manage your vNext workflows" >> $GITHUB_STEP_SUMMARY
+

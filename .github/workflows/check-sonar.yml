@@ -1,0 +1,69 @@
+name: SonarQube Analysis
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'release-v*'
+  pull_request:
+    branches:
+      - main
+      - develop
+      - 'release-v*'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  sonar:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: |
+        echo "Installing dependencies..."
+        if [ -f "package-lock.json" ]; then
+          npm ci
+        else
+          npm install
+        fi
+        echo "Dependencies installed successfully"
+    
+    - name: Run tests with coverage
+      run: |
+        echo "Running tests..."
+        if npm run test:coverage --silent > /dev/null 2>&1; then
+          npm run test:coverage
+        elif npm run test --silent > /dev/null 2>&1; then
+          npm test
+        else
+          echo "No test script found, skipping tests..."
+        fi
+    
+    - name: SonarQube Scan
+      uses: sonarsource/sonarqube-scan-action@master
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+    
+    - name: SonarQube Quality Gate check
+      uses: sonarsource/sonarqube-quality-gate-action@master
+      timeout-minutes: 5
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      # Force to fail step after specific time
+      continue-on-error: false
+

@@ -49,10 +49,14 @@ jobs:
         node-version: '20.x'
         registry-url: 'https://registry.npmjs.org'
         cache: 'npm'
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     
     - name: Calculate version
       id: version
       run: |
+        PACKAGE_NAME=$(node -p "require('./package.json').name")
+        
         # Check if version is manually provided
         if [ -n "${{ github.event.inputs.version_override }}" ]; then
           VERSION="${{ github.event.inputs.version_override }}"
@@ -65,27 +69,36 @@ jobs:
             BASE_VERSION="${BASH_REMATCH[1]}"
             echo "Base version from branch: $BASE_VERSION"
             
+            # Check NPM for the latest published version matching this base version
+            LATEST_NPM_VERSION=""
+            if npm view "$PACKAGE_NAME" versions --json > /dev/null 2>&1; then
+              # Get all versions from NPM and find the latest matching the base version
+              NPM_VERSIONS=$(npm view "$PACKAGE_NAME" versions --json 2>/dev/null | grep -o "\"${BASE_VERSION}\.[0-9]*\"" | sed 's/"//g' | sort -V | tail -1)
+              if [ -n "$NPM_VERSIONS" ]; then
+                LATEST_NPM_VERSION="$NPM_VERSIONS"
+                echo "Latest published version on NPM: $LATEST_NPM_VERSION"
+              fi
+            fi
+            
             # Find the next available patch version
-            PATCH=0
-            while true; do
+            if [ -n "$LATEST_NPM_VERSION" ]; then
+              # Extract patch version from latest NPM version and increment
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_NPM_VERSION"
+              PATCH=$((PATCH + 1))
+              VERSION="${MAJOR}.${MINOR}.${PATCH}"
+              echo "Incremented from latest NPM version: $VERSION"
+            else
+              # No version found on NPM, start from patch 0
+              PATCH=0
               VERSION="${BASE_VERSION}.${PATCH}"
-              TAG="v${VERSION}"
-              
-              # Check if this tag already exists
-              if git tag -l "$TAG" | grep -q "^$TAG$"; then
-                echo "Version $VERSION already exists, trying next patch version..."
-                PATCH=$((PATCH + 1))
-              else
-                echo "Found available version: $VERSION"
-                break
-              fi
-              
-              # Safety check to prevent infinite loop
-              if [ $PATCH -gt 100 ]; then
-                echo "Error: Could not find available patch version after 100 attempts"
-                exit 1
-              fi
-            done
+              echo "No existing version on NPM, starting with: $VERSION"
+            fi
+            
+            # Verify the version doesn't exist as a git tag
+            TAG="v${VERSION}"
+            if git tag -l "$TAG" | grep -q "^$TAG$"; then
+              echo "⚠️  Warning: Version $VERSION exists as git tag, but continuing with NPM version..."
+            fi
           else
             # Fallback to version from package.json and increment patch
             echo "Branch name doesn't match release-vX.Y pattern, using version from package.json"
@@ -96,11 +109,26 @@ jobs:
               exit 1
             fi
             
-            # Split version into parts and increment patch
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
-            PATCH=$((PATCH + 1))
-            VERSION="${MAJOR}.${MINOR}.${PATCH}"
-            echo "Incremented version: $VERSION"
+            # Check NPM for latest version
+            LATEST_NPM_VERSION=""
+            if npm view "$PACKAGE_NAME" version > /dev/null 2>&1; then
+              LATEST_NPM_VERSION=$(npm view "$PACKAGE_NAME" version 2>/dev/null)
+              echo "Latest published version on NPM: $LATEST_NPM_VERSION"
+            fi
+            
+            if [ -n "$LATEST_NPM_VERSION" ]; then
+              # Use NPM version and increment patch
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_NPM_VERSION"
+              PATCH=$((PATCH + 1))
+              VERSION="${MAJOR}.${MINOR}.${PATCH}"
+              echo "Incremented from latest NPM version: $VERSION"
+            else
+              # No NPM version, increment from package.json
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+              PATCH=$((PATCH + 1))
+              VERSION="${MAJOR}.${MINOR}.${PATCH}"
+              echo "Incremented from package.json version: $VERSION"
+            fi
           fi
         fi
         
@@ -110,12 +138,35 @@ jobs:
     - name: Update version in package.json
       run: |
         VERSION="${{ steps.version.outputs.version }}"
-        npm version "$VERSION" --no-git-tag-version
-        echo "Updated package.json with version $VERSION"
+        CURRENT_VERSION=$(node -p "require('./package.json').version")
+        
+        echo "Current version in package.json: $CURRENT_VERSION"
+        echo "Target version: $VERSION"
+        
+        if [ "$CURRENT_VERSION" == "$VERSION" ]; then
+          echo "✅ Version is already $VERSION, skipping version update"
+        else
+          echo "Updating version from $CURRENT_VERSION to $VERSION..."
+          npm version "$VERSION" --no-git-tag-version || {
+            echo "⚠️  npm version failed, trying manual update..."
+            # Fallback: manually update package.json
+            node -e "const fs = require('fs'); const pkg = require('./package.json'); pkg.version = '$VERSION'; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');"
+            echo "✅ Manually updated package.json with version $VERSION"
+          }
+        fi
+        
+        # Verify the version was set correctly
+        FINAL_VERSION=$(node -p "require('./package.json').version")
+        echo "Final version in package.json: $FINAL_VERSION"
         
         # Show the updated version info
+        echo ""
         echo "Package details:"
-        cat package.json | jq '.name, .version, .description'
+        if command -v jq &> /dev/null; then
+          cat package.json | jq '.name, .version, .description'
+        else
+          node -p "const pkg = require('./package.json'); console.log('Name:', pkg.name); console.log('Version:', pkg.version); console.log('Description:', pkg.description);"
+        fi
     
     - name: Install dependencies
       run: |
@@ -148,16 +199,31 @@ jobs:
         
         # Check all source files for syntax errors
         echo "Checking source files for syntax errors..."
-        for js_file in src/**/*.js; do
-          if [ -f "$js_file" ]; then
+        # Enable globstar for recursive globbing
+        shopt -s globstar 2>/dev/null || true
+        # Use find as fallback if globstar doesn't work
+        if shopt -q globstar 2>/dev/null; then
+          for js_file in src/**/*.js; do
+            if [ -f "$js_file" ]; then
+              if node -c "$js_file"; then
+                echo "✅ Valid syntax: $js_file"
+              else
+                echo "❌ Invalid syntax: $js_file"
+                exit 1
+              fi
+            fi
+          done
+        else
+          # Fallback to find command
+          find src -name "*.js" -type f | while read -r js_file; do
             if node -c "$js_file"; then
               echo "✅ Valid syntax: $js_file"
             else
               echo "❌ Invalid syntax: $js_file"
               exit 1
             fi
-          fi
-        done
+          done
+        fi
         
         echo "All files have valid JavaScript syntax"
     
@@ -258,6 +324,35 @@ jobs:
           fi
         fi
     
+    - name: Verify NPM authentication
+      if: github.event.inputs.registry_target != 'github'
+      run: |
+        echo "🔐 Verifying NPM authentication..."
+        
+        # Verify token is valid by checking whoami
+        echo "Checking NPM authentication..."
+        if npm whoami > /dev/null 2>&1; then
+          NPM_USER=$(npm whoami)
+          echo "✅ Authenticated as: $NPM_USER"
+        else
+          echo "❌ NPM authentication failed"
+          echo "Please verify that NPM_TOKEN secret is set and has the correct permissions"
+          echo "The token must be of type 'Automation' with publish permissions"
+          exit 1
+        fi
+        
+        # Check if we can access the scope
+        PACKAGE_NAME=$(node -p "require('./package.json').name")
+        SCOPE=$(echo "$PACKAGE_NAME" | cut -d'/' -f1 | sed 's/@//')
+        echo "Checking access to scope: $SCOPE"
+        
+        # Try to view any package in the scope to verify access
+        if npm view "@${SCOPE}/" > /dev/null 2>&1; then
+          echo "✅ Have access to scope: $SCOPE"
+        else
+          echo "⚠️  Cannot verify scope access (this may be normal for new scopes)"
+        fi
+    
     - name: Publish to NPM
       id: publish
       run: |
@@ -280,21 +375,121 @@ jobs:
           echo ""
           echo "📤 Publishing to NPM (npmjs.org)..."
           
+          # Verify npm configuration
+          echo "NPM registry: $(npm config get registry)"
+          echo "NPM scope registry: $(npm config get @burgan-tech:registry || echo 'not set')"
+          
+          # Check if package exists on NPM
+          PACKAGE_EXISTS=false
+          if npm view "$PACKAGE_NAME" version > /dev/null 2>&1; then
+            PACKAGE_EXISTS=true
+            echo "✅ Package exists on NPM"
+          else
+            echo "ℹ️  Package does not exist on NPM yet - will create it on first publish"
+          fi
+          
           if [ "$FORCE_PUBLISH" == "true" ]; then
             echo "⚠️  Force publish enabled - will attempt to publish even if version exists"
-            npm publish --access public || echo "⚠️  NPM publish failed (may already exist)"
-          else
-            # Check if version already exists
-            if npm view "$PACKAGE_NAME@$VERSION" version > /dev/null 2>&1; then
-              echo "❌ Version $VERSION already exists on NPM"
-              echo "💡 Tip: Use 'force_publish: true' to republish existing versions"
+            
+            # Ensure we're using the correct registry
+            npm config set registry https://registry.npmjs.org/
+            
+            if npm publish --access public; then
+              echo "✅ Successfully published to NPM"
+              PUBLISHED=true
+              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
             else
+              PUBLISH_EXIT_CODE=$?
+              echo "❌ NPM publish failed (exit code: $PUBLISH_EXIT_CODE)"
+              echo ""
+              echo "=== Authentication Check ==="
+              if npm whoami > /dev/null 2>&1; then
+                echo "✅ Authenticated as: $(npm whoami)"
+              else
+                echo "❌ Not authenticated"
+              fi
+              echo ""
+              echo "Please check the NPM_TOKEN permissions and ensure it has 'Automation' type."
+              exit 1
+            fi
+          else
+            # Check if version already exists (only if package exists)
+            VERSION_EXISTS=false
+            if [ "$PACKAGE_EXISTS" == "true" ]; then
+              if npm view "$PACKAGE_NAME@$VERSION" version > /dev/null 2>&1; then
+                VERSION_EXISTS=true
+                echo "❌ Version $VERSION already exists on NPM"
+                echo "💡 Tip: Use 'force_publish: true' to republish existing versions"
+              fi
+            fi
+            
+            if [ "$VERSION_EXISTS" == "true" ]; then
+              echo "Skipping publish - version already exists"
+            else
+              # Try to publish (will create package if it doesn't exist)
+              if [ "$PACKAGE_EXISTS" == "false" ]; then
+                echo "📦 Creating new package on NPM..."
+              else
+                echo "📦 Publishing version $VERSION..."
+              fi
+              
+              # Ensure we're using the correct registry
+              npm config set registry https://registry.npmjs.org/
+              
+              # Try to publish
               if npm publish --access public; then
                 echo "✅ Successfully published to NPM"
+                if [ "$PACKAGE_EXISTS" == "false" ]; then
+                  echo "🎉 Package created successfully!"
+                fi
                 PUBLISHED=true
                 SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
               else
-                echo "❌ Failed to publish to NPM"
+                PUBLISH_EXIT_CODE=$?
+                echo "❌ Failed to publish to NPM (exit code: $PUBLISH_EXIT_CODE)"
+                echo ""
+                
+                # Capture npm error output for debugging
+                echo "=== NPM Error Details ==="
+                npm publish --access public 2>&1 | head -20 || true
+                echo ""
+                
+                echo "=== Authentication Check ==="
+                if npm whoami > /dev/null 2>&1; then
+                  echo "✅ Authenticated as: $(npm whoami)"
+                else
+                  echo "❌ Not authenticated"
+                fi
+                echo ""
+                
+                echo "=== Registry Configuration ==="
+                echo "Registry: $(npm config get registry)"
+                echo "Scope registry: $(npm config get @burgan-tech:registry || echo 'not set')"
+                echo ""
+                
+                echo "Common causes for 404 errors:"
+                echo "1. NPM_TOKEN doesn't have permission to publish to '@burgan-tech' scope"
+                echo "2. The scope '@burgan-tech' needs to be created on NPM"
+                echo "3. The token is invalid or expired"
+                echo "4. The token type is incorrect (needs 'Automation' type for CI/CD)"
+                echo ""
+                echo "To fix:"
+                echo "1. Go to https://www.npmjs.com/settings/burgan-tech/packages"
+                echo "2. Ensure the scope exists and you have publish permissions"
+                echo "3. Create a new NPM token with 'Automation' type at https://www.npmjs.com/settings/burgan-tech/tokens"
+                echo "   - Token type MUST be 'Automation' (not 'Publish' or 'Read-only')"
+                echo "   - The token must have 'Publish packages' permission"
+                echo "4. Update the NPM_TOKEN secret in GitHub repository settings"
+                echo "   - Repository Settings > Secrets and variables > Actions > NPM_TOKEN"
+                echo ""
+                echo "Note: npm publish should automatically create the package if it doesn't exist."
+                echo "If you get a 404 error, it's usually a permissions issue with the NPM_TOKEN."
+                echo ""
+                echo "For scoped packages, ensure:"
+                echo "- The scope '@burgan-tech' exists on npmjs.com"
+                echo "- Your npm account has access to the scope"
+                echo "- The token has 'Automation' type with publish permissions"
+                exit 1
               fi
             fi
           fi

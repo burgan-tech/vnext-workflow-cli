@@ -324,6 +324,35 @@ jobs:
           fi
         fi
     
+    - name: Verify NPM authentication
+      if: github.event.inputs.registry_target != 'github'
+      run: |
+        echo "🔐 Verifying NPM authentication..."
+        
+        # Verify token is valid by checking whoami
+        echo "Checking NPM authentication..."
+        if npm whoami > /dev/null 2>&1; then
+          NPM_USER=$(npm whoami)
+          echo "✅ Authenticated as: $NPM_USER"
+        else
+          echo "❌ NPM authentication failed"
+          echo "Please verify that NPM_TOKEN secret is set and has the correct permissions"
+          echo "The token must be of type 'Automation' with publish permissions"
+          exit 1
+        fi
+        
+        # Check if we can access the scope
+        PACKAGE_NAME=$(node -p "require('./package.json').name")
+        SCOPE=$(echo "$PACKAGE_NAME" | cut -d'/' -f1 | sed 's/@//')
+        echo "Checking access to scope: $SCOPE"
+        
+        # Try to view any package in the scope to verify access
+        if npm view "@${SCOPE}/" > /dev/null 2>&1; then
+          echo "✅ Have access to scope: $SCOPE"
+        else
+          echo "⚠️  Cannot verify scope access (this may be normal for new scopes)"
+        fi
+    
     - name: Publish to NPM
       id: publish
       run: |
@@ -346,6 +375,10 @@ jobs:
           echo ""
           echo "📤 Publishing to NPM (npmjs.org)..."
           
+          # Verify npm configuration
+          echo "NPM registry: $(npm config get registry)"
+          echo "NPM scope registry: $(npm config get @burgan-tech:registry || echo 'not set')"
+          
           # Check if package exists on NPM
           PACKAGE_EXISTS=false
           if npm view "$PACKAGE_NAME" version > /dev/null 2>&1; then
@@ -357,12 +390,27 @@ jobs:
           
           if [ "$FORCE_PUBLISH" == "true" ]; then
             echo "⚠️  Force publish enabled - will attempt to publish even if version exists"
+            
+            # Ensure we're using the correct registry
+            npm config set registry https://registry.npmjs.org/
+            
             if npm publish --access public; then
               echo "✅ Successfully published to NPM"
               PUBLISHED=true
               SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
             else
-              echo "⚠️  NPM publish failed"
+              PUBLISH_EXIT_CODE=$?
+              echo "❌ NPM publish failed (exit code: $PUBLISH_EXIT_CODE)"
+              echo ""
+              echo "=== Authentication Check ==="
+              if npm whoami > /dev/null 2>&1; then
+                echo "✅ Authenticated as: $(npm whoami)"
+              else
+                echo "❌ Not authenticated"
+              fi
+              echo ""
+              echo "Please check the NPM_TOKEN permissions and ensure it has 'Automation' type."
+              exit 1
             fi
           else
             # Check if version already exists (only if package exists)
@@ -385,6 +433,10 @@ jobs:
                 echo "📦 Publishing version $VERSION..."
               fi
               
+              # Ensure we're using the correct registry
+              npm config set registry https://registry.npmjs.org/
+              
+              # Try to publish
               if npm publish --access public; then
                 echo "✅ Successfully published to NPM"
                 if [ "$PACKAGE_EXISTS" == "false" ]; then
@@ -396,19 +448,47 @@ jobs:
                 PUBLISH_EXIT_CODE=$?
                 echo "❌ Failed to publish to NPM (exit code: $PUBLISH_EXIT_CODE)"
                 echo ""
+                
+                # Capture npm error output for debugging
+                echo "=== NPM Error Details ==="
+                npm publish --access public 2>&1 | head -20 || true
+                echo ""
+                
+                echo "=== Authentication Check ==="
+                if npm whoami > /dev/null 2>&1; then
+                  echo "✅ Authenticated as: $(npm whoami)"
+                else
+                  echo "❌ Not authenticated"
+                fi
+                echo ""
+                
+                echo "=== Registry Configuration ==="
+                echo "Registry: $(npm config get registry)"
+                echo "Scope registry: $(npm config get @burgan-tech:registry || echo 'not set')"
+                echo ""
+                
                 echo "Common causes for 404 errors:"
                 echo "1. NPM_TOKEN doesn't have permission to publish to '@burgan-tech' scope"
                 echo "2. The scope '@burgan-tech' needs to be created on NPM"
                 echo "3. The token is invalid or expired"
+                echo "4. The token type is incorrect (needs 'Automation' type for CI/CD)"
                 echo ""
                 echo "To fix:"
                 echo "1. Go to https://www.npmjs.com/settings/burgan-tech/packages"
                 echo "2. Ensure the scope exists and you have publish permissions"
                 echo "3. Create a new NPM token with 'Automation' type at https://www.npmjs.com/settings/burgan-tech/tokens"
+                echo "   - Token type MUST be 'Automation' (not 'Publish' or 'Read-only')"
+                echo "   - The token must have 'Publish packages' permission"
                 echo "4. Update the NPM_TOKEN secret in GitHub repository settings"
+                echo "   - Repository Settings > Secrets and variables > Actions > NPM_TOKEN"
                 echo ""
                 echo "Note: npm publish should automatically create the package if it doesn't exist."
                 echo "If you get a 404 error, it's usually a permissions issue with the NPM_TOKEN."
+                echo ""
+                echo "For scoped packages, ensure:"
+                echo "- The scope '@burgan-tech' exists on npmjs.com"
+                echo "- Your npm account has access to the scope"
+                echo "- The token has 'Automation' type with publish permissions"
                 exit 1
               fi
             fi

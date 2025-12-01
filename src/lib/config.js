@@ -8,6 +8,7 @@ const config = new Conf({
     AUTO_DISCOVER: true,
     API_BASE_URL: 'http://localhost:4201',
     API_VERSION: 'v1',
+    API_DOMAIN: 'core',
     DB_HOST: 'localhost',
     DB_PORT: 5432,
     DB_NAME: 'vNext_WorkflowDb',

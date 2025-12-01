@@ -58,8 +58,9 @@ async function processWorkflow(jsonPath, dbConfig, apiConfig) {
   // 3. API'ye POST et
   const apiUrl = apiConfig.baseUrl;
   const apiVersion = apiConfig.version;
+  const apiDomain = apiConfig.domain;
   
-  const postResult = await postWorkflow(apiUrl, apiVersion, flow, metadata.data);
+  const postResult = await postWorkflow(apiUrl, apiVersion, apiDomain, flow, metadata.data);
   const newInstanceId = postResult.id || postResult.Id;
   
   if (!newInstanceId) {
@@ -67,7 +68,7 @@ async function processWorkflow(jsonPath, dbConfig, apiConfig) {
   }
   
   // 4. Aktif et
-  await activateWorkflow(apiUrl, apiVersion, flow, newInstanceId, metadata.version);
+  await activateWorkflow(apiUrl, apiVersion, apiDomain, flow, newInstanceId, metadata.version);
   
   return {
     key: metadata.key,

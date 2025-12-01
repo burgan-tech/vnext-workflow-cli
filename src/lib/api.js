@@ -17,8 +17,7 @@ async function testApiConnection(baseUrl) {
 /**
  * Workflow'u API'ye post eder
  */
-async function postWorkflow(baseUrl, version, flow, data) {
-  const domain = 'core'; // API_DOMAIN
+async function postWorkflow(baseUrl, version, domain, flow, data) {
   const workflowVersion = data.version || '1.0.0';
   const syncMode = 'true';
   
@@ -36,8 +35,7 @@ async function postWorkflow(baseUrl, version, flow, data) {
 /**
  * Workflow'u aktif eder
  */
-async function activateWorkflow(baseUrl, version, flow, instanceId, workflowVersion) {
-  const domain = 'core'; // API_DOMAIN
+async function activateWorkflow(baseUrl, version, domain, flow, instanceId, workflowVersion) {
   const syncMode = 'true';
   
   const url = `${baseUrl}/api/${version}/${domain}/workflows/${flow}/instances/${instanceId}/transitions/activate?version=${workflowVersion}&sync=${syncMode}`;

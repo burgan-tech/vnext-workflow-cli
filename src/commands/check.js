@@ -28,13 +28,14 @@ async function checkCommand() {
   // DB kontrolü
   let dbSpinner = ora('Veritabanı kontrolü...').start();
   try {
+    const useDockerValue = config.get('USE_DOCKER');
     const isDbOk = await testDbConnection({
       host: config.get('DB_HOST'),
       port: config.get('DB_PORT'),
       database: config.get('DB_NAME'),
       user: config.get('DB_USER'),
       password: config.get('DB_PASSWORD'),
-      useDocker: config.get('USE_DOCKER'),
+      useDocker: useDockerValue === true || useDockerValue === 'true',
       dockerContainer: config.get('DOCKER_POSTGRES_CONTAINER')
     });
     if (isDbOk) {

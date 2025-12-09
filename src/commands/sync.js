@@ -29,20 +29,22 @@ async function syncCommand() {
   }
   
   // DB Config
+  const useDockerValue = config.get('USE_DOCKER');
   const dbConfig = {
     host: config.get('DB_HOST'),
     port: config.get('DB_PORT'),
     database: config.get('DB_NAME'),
     user: config.get('DB_USER'),
     password: config.get('DB_PASSWORD'),
-    useDocker: config.get('USE_DOCKER'),
+    useDocker: useDockerValue === true || useDockerValue === 'true',
     dockerContainer: config.get('DOCKER_POSTGRES_CONTAINER')
   };
   
   // API Config
   const apiConfig = {
     baseUrl: config.get('API_BASE_URL'),
-    version: config.get('API_VERSION')
+    version: config.get('API_VERSION'),
+    domain: config.get('API_DOMAIN')
   };
   
   // Klasörleri bul
@@ -120,6 +122,7 @@ async function syncCommand() {
         const postResult = await postWorkflow(
           apiConfig.baseUrl,
           apiConfig.version,
+          apiConfig.domain,
           flow,
           metadata.data
         );
@@ -130,6 +133,7 @@ async function syncCommand() {
         await activateWorkflow(
           apiConfig.baseUrl,
           apiConfig.version,
+          apiConfig.domain,
           flow,
           newId,
           metadata.version

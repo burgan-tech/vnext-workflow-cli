@@ -1,9 +1,12 @@
 const fs = require('fs').promises;
 const path = require('path');
 const { glob } = require('glob');
+const { discoverComponents, findAllJsonFiles } = require('./discover');
 
 /**
- * CSX dosyasını Base64'e çevirir
+ * Encodes CSX file to Base64
+ * @param {string} csxPath - CSX file path
+ * @returns {Promise<string>} Base64 encoded content
  */
 async function encodeToBase64(csxPath) {
   const content = await fs.readFile(csxPath, 'utf8');
@@ -11,28 +14,32 @@ async function encodeToBase64(csxPath) {
 }
 
 /**
- * CSX dosyası için ilgili JSON dosyalarını bulur
+ * Finds JSON files that reference the CSX file
+ * Only searches in paths defined in vnext.config.json
+ * @param {string} csxPath - CSX file path
+ * @param {string} projectRoot - Project root folder
+ * @returns {Promise<string[]>} Matching JSON file paths
  */
 async function findJsonFilesForCsx(csxPath, projectRoot) {
   const csxBaseName = path.basename(csxPath);
   
-  // Tüm JSON dosyalarını bul
-  const pattern = path.join(projectRoot, '**', '*.json');
-  const jsonFiles = await glob(pattern, {
-    ignore: ['**/node_modules/**', '**/dist/**', '**/package*.json', '**/*config*.json']
-  });
+  // Get discovered components (only paths defined in vnext.config.json)
+  const discovered = await discoverComponents(projectRoot);
   
-  // CSX referansı olan JSON'ları filtrele
+  // Get all JSON files from discovered components only
+  const jsonFileInfos = await findAllJsonFiles(discovered);
+  
+  // Filter JSONs that reference the CSX
   const matchingJsons = [];
   
-  for (const jsonFile of jsonFiles) {
+  for (const jsonInfo of jsonFileInfos) {
     try {
-      const content = await fs.readFile(jsonFile, 'utf8');
+      const content = await fs.readFile(jsonInfo.path, 'utf8');
       if (content.includes(csxBaseName)) {
-        matchingJsons.push(jsonFile);
+        matchingJsons.push(jsonInfo.path);
       }
     } catch (error) {
-      // Ignore
+      // Skip unreadable files
     }
   }
   
@@ -40,11 +47,14 @@ async function findJsonFilesForCsx(csxPath, projectRoot) {
 }
 
 /**
- * CSX location path'ini hesaplar
+ * Calculates CSX location path
+ * @param {string} csxPath - CSX file path
+ * @param {string} projectRoot - Project root folder
+ * @returns {string} Location path
  */
-function getCsxLocation(csxPath) {
-  // ./src/Rules/MyRule.csx formatına çevir
-  const parts = csxPath.split('/');
+function getCsxLocation(csxPath, projectRoot) {
+  // Convert to ./src/Rules/MyRule.csx format
+  const parts = csxPath.split(path.sep);
   const srcIndex = parts.lastIndexOf('src');
   
   if (srcIndex !== -1) {
@@ -56,91 +66,154 @@ function getCsxLocation(csxPath) {
 }
 
 /**
- * JSON dosyasında CSX code'unu günceller
+ * Updates ALL CSX codes in a JSON file
+ * Updates all references with the same location
+ * Supports encoding types: NAT (native/plain text), B64 (Base64, default)
+ * @param {string} jsonPath - JSON file path
+ * @param {string} csxLocation - CSX location path
+ * @param {string} base64Code - Base64 encoded CSX content
+ * @param {string} nativeCode - Native (plain text) CSX content
+ * @returns {Promise<number>} Number of updated references
  */
-async function updateCodeInJson(jsonPath, csxLocation, base64Code) {
+async function updateCodeInJson(jsonPath, csxLocation, base64Code, nativeCode) {
   const content = await fs.readFile(jsonPath, 'utf8');
   const data = JSON.parse(content);
   
-  // Recursive olarak location'ı bul ve güncelle
+  let updateCount = 0;
+  
+  // Recursively find and update ALL location matches
   function updateRecursive(obj) {
-    if (typeof obj !== 'object' || obj === null) return false;
+    if (typeof obj !== 'object' || obj === null) return;
+    
+    // Skip if location is missing
+    if (!obj.location) {
+      // Continue scanning children
+      for (const key in obj) {
+        if (typeof obj[key] === 'object' && obj[key] !== null) {
+          updateRecursive(obj[key]);
+        }
+      }
+      return;
+    }
     
     if (obj.location === csxLocation && 'code' in obj) {
-      obj.code = base64Code;
-      return true;
+      // Check encoding type: NAT = Native (plain text), B64 or empty = Base64 (default)
+      const encoding = obj.encoding ? obj.encoding.toUpperCase() : 'B64';
+      
+      if (encoding === 'NAT') {
+        // Native encoding - write plain text content
+        obj.code = nativeCode;
+      } else {
+        // B64 or default - write Base64 encoded content
+        obj.code = base64Code;
+      }
+      updateCount++;
     }
     
+    // Scan all elements in array or object
     for (const key in obj) {
-      if (updateRecursive(obj[key])) {
-        return true;
+      if (typeof obj[key] === 'object' && obj[key] !== null) {
+        updateRecursive(obj[key]);
       }
     }
-    
-    return false;
   }
   
-  const updated = updateRecursive(data);
+  updateRecursive(data);
   
-  if (updated) {
+  if (updateCount > 0) {
     await fs.writeFile(jsonPath, JSON.stringify(data, null, 2), 'utf8');
-    return true;
   }
   
-  return false;
+  return updateCount;
 }
 
 /**
- * Tek bir CSX dosyasını işler
+ * Reads CSX file content as plain text (native)
+ * @param {string} csxPath - CSX file path
+ * @returns {Promise<string>} Plain text content
+ */
+async function readNativeContent(csxPath) {
+  return await fs.readFile(csxPath, 'utf8');
+}
+
+/**
+ * Processes a single CSX file
+ * Updates ALL referencing JSON files
+ * Supports both NAT (native) and B64 (Base64) encoding
+ * @param {string} csxPath - CSX file path
+ * @param {string} projectRoot - Project root folder
+ * @returns {Promise<Object>} Process result
  */
 async function processCsxFile(csxPath, projectRoot) {
-  // Base64'e çevir
-  const base64Code = await encodeToBase64(csxPath);
+  // Read native content
+  const nativeCode = await readNativeContent(csxPath);
   
-  // İlgili JSON'ları bul
+  // Convert to Base64
+  const base64Code = Buffer.from(nativeCode).toString('base64');
+  
+  // Find ALL related JSONs (only in paths defined in vnext.config.json)
   const jsonFiles = await findJsonFilesForCsx(csxPath, projectRoot);
   
   if (jsonFiles.length === 0) {
-    return { success: false, message: 'İlgili JSON bulunamadı' };
+    return { 
+      success: false, 
+      message: 'No related JSON found',
+      updatedJsonCount: 0,
+      totalUpdates: 0,
+      jsonFiles: []
+    };
   }
   
-  // CSX location'ı hesapla
-  const csxLocation = getCsxLocation(csxPath);
+  // Calculate CSX location
+  const csxLocation = getCsxLocation(csxPath, projectRoot);
   
-  // Her JSON'u güncelle
-  let updatedCount = 0;
+  // Update each JSON
+  let updatedJsonCount = 0;
+  let totalUpdates = 0;
+  const updatedFiles = [];
+  
   for (const jsonFile of jsonFiles) {
     try {
-      const updated = await updateCodeInJson(jsonFile, csxLocation, base64Code);
-      if (updated) {
-        updatedCount++;
+      const updates = await updateCodeInJson(jsonFile, csxLocation, base64Code, nativeCode);
+      if (updates > 0) {
+        updatedJsonCount++;
+        totalUpdates += updates;
+        updatedFiles.push({
+          file: path.basename(jsonFile),
+          updates: updates
+        });
       }
     } catch (error) {
-      // Continue with next file
+      // Continue with next file on error
     }
   }
   
   return {
-    success: updatedCount > 0,
-    updatedCount,
-    jsonFiles: jsonFiles.map(f => path.basename(f))
+    success: updatedJsonCount > 0,
+    message: updatedJsonCount > 0 ? 'Updated' : 'No references to update',
+    updatedJsonCount,
+    totalUpdates,
+    jsonFiles: updatedFiles
   };
 }
 
 /**
- * Git'te değişen CSX dosyalarını bulur
+ * Finds changed CSX files in Git
+ * @param {string} projectRoot - Project root folder
+ * @returns {Promise<string[]>} Changed CSX file paths
  */
 async function getGitChangedCsx(projectRoot) {
   const { exec } = require('child_process');
   const util = require('util');
   const execPromise = util.promisify(exec);
+  const fsSync = require('fs');
   
   try {
-    // Git root'u bul
+    // Find git root
     const { stdout: gitRoot } = await execPromise('git rev-parse --show-toplevel', { cwd: projectRoot });
     const gitRootDir = gitRoot.trim();
     
-    // Git status'u git root'tan çalıştır
+    // Run git status from git root
     const { stdout } = await execPromise('git status --porcelain', { cwd: gitRootDir });
     const lines = stdout.split('\n').filter(Boolean);
     
@@ -158,7 +231,7 @@ async function getGitChangedCsx(projectRoot) {
       .filter(file => {
         // Only .csx files that exist and are in our project
         return file.endsWith('.csx') && 
-               require('fs').existsSync(file) &&
+               fsSync.existsSync(file) &&
                file.startsWith(path.normalize(projectRoot));
       });
     
@@ -169,18 +242,19 @@ async function getGitChangedCsx(projectRoot) {
 }
 
 /**
- * Tüm CSX dosyalarını bulur
+ * Finds all CSX files in discovered components ONLY
+ * Does NOT scan folders outside of paths definition
+ * @param {string} projectRoot - Project root folder
+ * @returns {Promise<string[]>} CSX file paths
  */
 async function findAllCsx(projectRoot) {
-  const pattern = path.join(projectRoot, '**', 'src', '**', '*.csx');
-  const files = await glob(pattern, {
-    ignore: ['**/node_modules/**', '**/dist/**']
-  });
-  return files;
+  const { findAllCsxInComponents } = require('./discover');
+  return findAllCsxInComponents(projectRoot);
 }
 
 module.exports = {
   encodeToBase64,
+  readNativeContent,
   findJsonFilesForCsx,
   getCsxLocation,
   updateCodeInJson,
@@ -188,4 +262,3 @@ module.exports = {
   getGitChangedCsx,
   findAllCsx
 };
-

@@ -53,24 +53,70 @@ npm link
 
 ---
 
+## 📄 vnext.config.json (Required)
+
+Every vNext project must have a `vnext.config.json` file in the **project root**. This file defines the domain and component paths.
+
+### Example Configuration
+
+```json
+{
+  "version": "1.0.0",
+  "domain": "core",
+  "paths": {
+    "componentsRoot": "core",
+    "tasks": "Tasks",
+    "views": "Views",
+    "functions": "Functions",
+    "extensions": "Extensions",
+    "workflows": "Workflows",
+    "schemas": "Schemas"
+  }
+}
+```
+
+### Key Properties
+
+| Property | Description |
+|----------|-------------|
+| `domain` | Domain name used for API calls (replaces config's API_DOMAIN) |
+| `paths.componentsRoot` | Root folder where all components are located |
+| `paths.tasks` | Tasks folder name under componentsRoot |
+| `paths.workflows` | Workflows folder name under componentsRoot |
+| `paths.schemas` | Schemas folder name under componentsRoot |
+| `paths.views` | Views folder name under componentsRoot |
+| `paths.functions` | Functions folder name under componentsRoot |
+| `paths.extensions` | Extensions folder name under componentsRoot |
+
+### Component Discovery
+
+The CLI scans `componentsRoot` recursively and:
+- Includes all `.json` files in subfolders
+- Ignores `.meta` folders
+- Ignores `*.diagram.json` files
+- Ignores `package*.json` and `*config*.json` files
+
+---
+
 ## ⚡ Quick Start
 
 ### Initial Configuration
 
-After installation, configure the CLI:
+After installation, navigate to your vNext project and run:
 
 ```bash
-# Set project root path (REQUIRED)
-wf config set PROJECT_ROOT /path/to/your/vnext-project
+# Go to your vNext project directory
+cd /path/to/your/vnext-project
 
-# Database settings
-wf config set DB_PASSWORD postgres
+# Database settings (if using Docker)
 wf config set USE_DOCKER true
 wf config set DOCKER_POSTGRES_CONTAINER vnext-postgres
 
 # Verify configuration
 wf check
 ```
+
+**Note:** The CLI automatically uses the current working directory as the project root. Just `cd` into your project folder before running commands.
 
 ### Basic Usage
 
@@ -93,146 +139,255 @@ wf reset
 ## 📖 Commands
 
 ### `wf check`
-Checks system status (API, DB, folders).
 
-### `wf config <action> [key] [value]`
-Configuration management:
+**Purpose**: System health check
+
+Checks and displays:
+- vnext.config.json status and domain info
+- API connection status
+- Database connection status
+- Component folders found
+
 ```bash
-wf config get              # Show all settings
-wf config get PROJECT_ROOT # Show a specific setting
-wf config set DB_PASSWORD pass # Change a setting
+wf check
 ```
 
-### `wf csx [options]`
-Converts CSX files to Base64 and embeds them in JSON files.
+---
+
+### `wf sync`
+
+**Purpose**: Add missing components to database (skip existing)
+
+**What it does**:
+1. Scans all CSX files and updates JSON files with base64 encoded content
+2. For each component JSON file:
+   - Checks if it exists in DB (by key)
+   - If **exists** → Skip (already synced)
+   - If **not exists** → Publish to API
+3. Re-initializes the system
+
+**Use when**: Initial setup, adding new components without affecting existing ones
+
 ```bash
-wf csx              # Process changed files in Git
-wf csx --all        # Process all CSX files
-wf csx --file x.csx # Process a single file
+wf sync
 ```
+
+---
 
 ### `wf update [options]`
-Updates workflows (CSX is automatically updated!).
+
+**Purpose**: Update changed components (delete + re-add)
+
+**What it does**:
+1. Finds changed CSX files (Git) and updates JSON files
+2. For each component JSON file:
+   - Checks if it exists in DB (by key)
+   - If **exists** → Delete from DB, then publish to API
+   - If **not exists** → Publish to API
+3. Re-initializes the system
+
+**Use when**: You modified existing components and want to update them
+
 ```bash
 wf update                # Process changed files in Git (CSX + JSON)
 wf update --all          # Update all (asks for confirmation)
 wf update --file x.json  # Process a single file
 ```
 
-**Process steps:**
-1. 📝 Converts changed CSX files to base64 and writes to JSON files
-2. 🗑️ Deletes existing record from DB
-3. 📤 POSTs to API
-4. ✅ Activates the workflow
-5. 🔄 Restarts the system
-
-### `wf sync`
-Updates all CSX files and adds missing ones to the database.
-```bash
-wf sync  # Update all CSX files + add missing ones
-```
+---
 
 ### `wf reset`
-Resets workflows with an interactive menu (even if there are no changes).
+
+**Purpose**: Force reset components (always delete + re-add)
+
+**What it does**:
+1. Shows interactive menu to select component type
+2. For each component JSON file:
+   - Checks if it exists in DB (by key)
+   - If **exists** → Delete from DB, then publish to API
+   - If **not exists** → Publish to API
+3. Re-initializes the system
+
+**Use when**: You need to force reset components regardless of changes
+
 ```bash
-wf reset  # Select folder from menu
+wf reset  # Select folder from interactive menu
 ```
 
-**Menu:**
+**Menu Options**:
 ```
 ? Which folder should be reset?
-❯ 🔵 Workflows (sys-flows)
-  📋 Tasks (sys-tasks)
-  📊 Schemas (sys-schemas)
-  👁️  Views (sys-views)
-  ⚙️  Functions (sys-functions)
-  🔌 Extensions (sys-extensions)
+❯ tasks (Tasks/)
+  views (Views/)
+  functions (Functions/)
+  extensions (Extensions/)
+  workflows (Workflows/)
+  schemas (Schemas/)
   ──────────────
-  🔴 ALL (All folders)
+  TUMU (All folders)
+```
+
+---
+
+### `wf csx [options]`
+
+**Purpose**: Convert CSX files to Base64 and embed in JSON files
+
+**What it does**:
+1. Finds CSX files (changed or all)
+2. Converts to Base64
+3. Updates ALL JSON files that reference the CSX file
+4. Updates ALL matching `location` references in each JSON
+
+**Use when**: You only want to update CSX content in JSONs without publishing to API
+
+```bash
+wf csx              # Process changed files in Git
+wf csx --all        # Process all CSX files
+wf csx --file x.csx # Process a single file
+```
+
+---
+
+### `wf config <action> [key] [value]`
+
+**Purpose**: Configuration management
+
+```bash
+wf config get              # Show all settings
+wf config get PROJECT_ROOT # Show a specific setting
+wf config set DB_PASSWORD pass # Change a setting
+```
+
+---
+
+## ⚙️ Configuration Variables
+
+Config file location: `~/.config/vnext-workflow-cli/config.json`
+
+### All Available Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROJECT_ROOT` | `process.cwd()` | **Auto.** Always uses current working directory (cannot be changed) |
+| `AUTO_DISCOVER` | `true` | Enable automatic component folder discovery |
+| `API_BASE_URL` | `http://localhost:4201` | vNext API base URL |
+| `API_VERSION` | `v1` | API version |
+| `DB_HOST` | `localhost` | PostgreSQL host |
+| `DB_PORT` | `5432` | PostgreSQL port |
+| `DB_NAME` | `vNext_WorkflowDb` | PostgreSQL database name |
+| `DB_USER` | `postgres` | PostgreSQL username |
+| `DB_PASSWORD` | `postgres` | PostgreSQL password |
+| `USE_DOCKER` | `false` | Use Docker for PostgreSQL connection |
+| `DOCKER_POSTGRES_CONTAINER` | `vnext-postgres` | Docker container name for PostgreSQL |
+| `DEBUG_MODE` | `false` | Enable debug logging |
+
+**Note:** `PROJECT_ROOT` is always the current working directory (`process.cwd()`). Simply `cd` into your project folder before running any command.
+
+### Quick Setup Examples
+
+```bash
+# API settings
+wf config set API_BASE_URL http://localhost:4201
+wf config set API_VERSION v1
+
+# Database settings (direct connection)
+wf config set DB_HOST localhost
+wf config set DB_PORT 5432
+wf config set DB_NAME vNext_WorkflowDb
+wf config set DB_USER postgres
+wf config set DB_PASSWORD your_password
+wf config set USE_DOCKER false
+
+# Database settings (Docker)
+wf config set USE_DOCKER true
+wf config set DOCKER_POSTGRES_CONTAINER vnext-postgres
+
+# Other settings
+wf config set AUTO_DISCOVER true
+wf config set DEBUG_MODE false
 ```
 
 ---
 
 ## 💡 Usage Scenarios
 
-### 1. Changing and Updating CSX File
+### 1. First Time Setup
 ```bash
-# Edit CSX file
-vim AddToCartMapping.csx
+# Go to your vNext project
+cd /path/to/project
 
-# Update in one command (CSX + JSON automatic)
-wf update
-```
+# Check system status
+wf check
 
-### 2. Updating Only CSX (Without Writing to DB)
-```bash
-# Convert CSX files to base64 and write to JSON files
-wf csx
-```
-
-### 3. Initial Setup / Full Sync
-```bash
-# Update all CSX files + add missing ones
+# Sync all components (add missing ones)
 wf sync
 ```
 
-### 4. Resetting Workflows (Delete from DB and Re-add)
+### 2. Daily Development - Changed Files
 ```bash
-# With interactive menu (RECOMMENDED)
-wf reset
+# Edit CSX or JSON files
+vim MyTask.csx
 
-# Reset all
+# Update only changed components
+wf update
+```
+
+### 3. Update All Components
+```bash
+# Force update all components
 wf update --all
+```
 
-# Single file
-wf update --file /path/to/file.json
+### 4. Reset Specific Component Type
+```bash
+# Interactive menu
+wf reset
+```
+
+### 5. Only Update CSX in JSONs (No API)
+```bash
+# Update CSX content in JSON files without publishing
+wf csx
 ```
 
 ---
 
-## ⚙️ Configuration
+## 🔄 Command Comparison
 
-Config file location: `~/.config/vnext-workflow-cli/config.json`
-
-### Important Settings
-```bash
-# Project root path (REQUIRED)
-wf config set PROJECT_ROOT /path/to/project
-
-# API settings
-wf config set API_BASE_URL http://localhost:4201
-wf config set API_VERSION v1
-
-# Database settings
-wf config set DB_HOST localhost
-wf config set DB_PORT 5432
-wf config set DB_NAME vNext_WorkflowDb
-wf config set DB_USER postgres
-wf config set DB_PASSWORD your_password
-
-# Docker settings
-wf config set USE_DOCKER true
-wf config set DOCKER_POSTGRES_CONTAINER vnext-postgres
-
-# Auto discovery
-wf config set AUTO_DISCOVER true
-```
+| Command | DB Check | Existing Action | New Action | Use Case |
+|---------|----------|-----------------|------------|----------|
+| `sync` | Yes | Skip | Publish | Add missing components |
+| `update` | Yes | Delete + Publish | Publish | Update changed components |
+| `reset` | Yes | Delete + Publish | Publish | Force reset components |
+| `csx` | No | N/A | N/A | Only update CSX in JSONs |
 
 ---
 
 ## 🆘 Troubleshooting
 
+### "vnext.config.json not found"
+```bash
+# Make sure you're in the correct directory
+pwd
+
+# Check if vnext.config.json exists
+ls -la vnext.config.json
+
+# Check current working directory
+wf config get PROJECT_ROOT
+```
+
 ### "Files not found" (When using on another PC)
 ```bash
-# Check current config
-wf config get PROJECT_ROOT
-
-# Set new PC's path
-wf config set PROJECT_ROOT /Users/NewUser/path/to/project
+# Just cd into the project directory
+cd /Users/NewUser/path/to/project
 
 # Verify
 wf check
 ```
+
+**Note:** No need to set PROJECT_ROOT - just `cd` into your project folder.
 
 ### "Cannot connect to API"
 ```bash
@@ -350,12 +505,13 @@ vnext-workflow-cli/
 │   │   ├── sync.js
 │   │   └── update.js
 │   └── lib/                 # Library modules
-│       ├── api.js
-│       ├── config.js
-│       ├── csx.js
-│       ├── db.js
-│       ├── discover.js
-│       └── workflow.js
+│       ├── api.js           # API client (publish, reinitialize)
+│       ├── config.js        # CLI configuration
+│       ├── csx.js           # CSX processing
+│       ├── db.js            # Database operations
+│       ├── discover.js      # Component discovery
+│       ├── vnextConfig.js   # vnext.config.json reader
+│       └── workflow.js      # Workflow processing
 ├── .github/
 │   └── workflows/           # GitHub Actions workflows
 │       ├── build-and-publish.yml
@@ -380,3 +536,9 @@ wf check
 # Run development
 npm run dev
 ```
+
+---
+
+## 📝 License
+
+MIT License - see [LICENSE](LICENSE) for details.

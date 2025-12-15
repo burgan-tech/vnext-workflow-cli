@@ -2,6 +2,8 @@ const axios = require('axios');
 
 /**
  * API bağlantısını test eder
+ * @param {string} baseUrl - API base URL
+ * @returns {Promise<boolean>} Bağlantı durumu
  */
 async function testApiConnection(baseUrl) {
   try {
@@ -15,44 +17,64 @@ async function testApiConnection(baseUrl) {
 }
 
 /**
- * Workflow'u API'ye post eder
+ * Komponenti API'ye publish eder
+ * @param {string} baseUrl - API base URL
+ * @param {Object} componentData - Komponent JSON verisi
+ * @returns {Promise<Object>} API response
  */
-async function postWorkflow(baseUrl, version, domain, flow, data) {
-  const workflowVersion = data.version || '1.0.0';
-  const syncMode = 'true';
+async function publishComponent(baseUrl, componentData) {
+  const url = `${baseUrl}/api/v1/definitions/publish`;
   
-  const url = `${baseUrl}/api/${version}/${domain}/workflows/${flow}/instances/start?version=${workflowVersion}&sync=${syncMode}`;
-  
-  const response = await axios.post(url, data, {
-    headers: {
-      'accept': '*/*',
-      'Content-Type': 'application/json'
+  try {
+    const response = await axios.post(url, componentData, {
+      headers: {
+        'accept': '*/*',
+        'Content-Type': 'application/json'
+      },
+      timeout: 30000
+    });
+    
+    return {
+      success: true,
+      data: response.data
+    };
+  } catch (error) {
+    // API hata detaylarını çıkar
+    let errorMessage = error.message;
+    let errorDetails = null;
+    
+    if (error.response) {
+      const responseData = error.response.data;
+      
+      if (typeof responseData === 'string') {
+        errorMessage = responseData;
+      } else if (responseData?.error?.message) {
+        errorMessage = responseData.error.message;
+        errorDetails = responseData.error;
+      } else if (responseData?.message) {
+        errorMessage = responseData.message;
+      } else if (responseData) {
+        errorMessage = JSON.stringify(responseData);
+      }
     }
-  });
-  return response.data;
-}
-
-/**
- * Workflow'u aktif eder
- */
-async function activateWorkflow(baseUrl, version, domain, flow, instanceId, workflowVersion) {
-  const syncMode = 'true';
-  
-  const url = `${baseUrl}/api/${version}/${domain}/workflows/${flow}/instances/${instanceId}/transitions/activate?version=${workflowVersion}&sync=${syncMode}`;
-  
-  const response = await axios.patch(url, null, {
-    headers: {
-      'accept': '*/*'
-    }
-  });
-  return response.data;
+    
+    return {
+      success: false,
+      error: errorMessage,
+      errorDetails: errorDetails,
+      statusCode: error.response?.status
+    };
+  }
 }
 
 /**
  * Sistemi yeniden başlatır
+ * @param {string} baseUrl - API base URL
+ * @param {string} version - API version
+ * @returns {Promise<boolean>} Başarı durumu
  */
 async function reinitializeSystem(baseUrl, version) {
-  const url = `${baseUrl}/api/${version}/admin/re-initialize`;
+  const url = `${baseUrl}/api/${version}/definitions/re-initialize`;
   try {
     await axios.get(url, { timeout: 10000 });
     return true;
@@ -63,8 +85,6 @@ async function reinitializeSystem(baseUrl, version) {
 
 module.exports = {
   testApiConnection,
-  postWorkflow,
-  activateWorkflow,
+  publishComponent,
   reinitializeSystem
 };
-

@@ -152,3 +152,8 @@ tmp/
 temp/
 *.tmp
 
+# macOS
+.DS_Store
+
+# AI documents
+ai-docs/

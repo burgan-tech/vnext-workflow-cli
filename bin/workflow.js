@@ -11,6 +11,7 @@ const updateCommand = require('../src/commands/update');
 const syncCommand = require('../src/commands/sync');
 const resetCommand = require('../src/commands/reset');
 const configCommand = require('../src/commands/config');
+const domainCommand = require('../src/commands/domain');
 
 program
   .name('workflow')
@@ -60,6 +61,40 @@ program
   .argument('[value]', 'Config value')
   .action(configCommand);
 
+// Domain command
+program
+  .command('domain')
+  .description('Domain yönetimi (multidomain desteği)')
+  .argument('[action]', 'active, add, use, list veya remove')
+  .argument('[name]', 'Domain adı')
+  .option('-l, --list', 'Domainleri listele')
+  .option('--API_BASE_URL <url>', 'API base URL')
+  .option('--API_VERSION <version>', 'API version')
+  .option('--DB_HOST <host>', 'Veritabanı host')
+  .option('--DB_PORT <port>', 'Veritabanı port')
+  .option('--DB_NAME <dbname>', 'Veritabanı adı')
+  .option('--DB_USER <user>', 'Veritabanı kullanıcı adı')
+  .option('--DB_PASSWORD <password>', 'Veritabanı şifresi')
+  .option('--AUTO_DISCOVER <value>', 'Otomatik keşif (true/false)')
+  .option('--USE_DOCKER <value>', 'Docker kullan (true/false)')
+  .option('--DOCKER_POSTGRES_CONTAINER <container>', 'Docker PostgreSQL container adı')
+  .option('--DEBUG_MODE <value>', 'Debug modu (true/false)')
+  .addHelpText('after', `
+Örnekler:
+  wf domain active                                                   Aktif domain adını göster
+  wf domain list                                                     Domainleri listele
+  wf domain --list                                                   Domainleri listele
+  wf domain add domain-a --API_BASE_URL http://localhost:4201 --DB_NAME myDb   Yeni domain ekle
+  wf domain use domain-a                                             Aktif domain değiştir
+  wf domain remove domain-a                                          Domain sil
+
+Notlar:
+  - Domain eklerken belirtilmeyen ayarlar default domain'den alınır.
+  - Default domain silinemez.
+  - Aktif domain silinirse otomatik olarak default'a geçilir.
+`)
+  .action(domainCommand);
+
 // Parse arguments
 program.parse(process.argv);
 
@@ -67,4 +102,3 @@ program.parse(process.argv);
 if (!process.argv.slice(2).length) {
   program.outputHelp();
 }
-

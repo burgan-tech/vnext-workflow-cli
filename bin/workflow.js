@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const { program } = require('commander');
+const { program, Argument } = require('commander');
 const chalk = require('chalk');
 const pkg = require('../package.json');
 
@@ -65,7 +65,7 @@ program
 program
   .command('domain')
   .description('Domain yönetimi (multidomain desteği)')
-  .argument('[action]', 'active, add, use, list veya remove')
+  .addArgument(new Argument('[action]', 'Yapılacak işlem').choices(['active', 'add', 'use', 'list', 'remove']))
   .argument('[name]', 'Domain adı')
   .option('-l, --list', 'Domainleri listele')
   .option('--API_BASE_URL <url>', 'API base URL')

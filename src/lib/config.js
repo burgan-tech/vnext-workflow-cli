@@ -49,11 +49,12 @@ function migrateConfig() {
     ...existingValues
   };
 
-  // Replace entire store with new format
-  config.store = {
-    ACTIVE_DOMAIN: 'default',
-    DOMAINS: [defaultDomain]
-  };
+  // Clear old keys and set new format via conf API
+  for (const key of DOMAIN_CONFIG_KEYS) {
+    config.delete(key);
+  }
+  config.set('ACTIVE_DOMAIN', 'default');
+  config.set('DOMAINS', [defaultDomain]);
 }
 
 // Run migration on module load
@@ -98,9 +99,14 @@ function get(key) {
  * @param {any} value - Config value
  */
 function set(key, value) {
-  if (key === 'PROJECT_ROOT') {
-    console.log('Note: PROJECT_ROOT is always the current working directory and cannot be changed.');
-    return;
+  const RESERVED_KEYS = {
+    PROJECT_ROOT: 'PROJECT_ROOT is always the current working directory and cannot be changed.',
+    DOMAIN_NAME: 'DOMAIN_NAME cannot be changed directly. Use "wf domain add/remove" instead.',
+    ACTIVE_DOMAIN: 'ACTIVE_DOMAIN cannot be changed directly. Use "wf domain use <name>" instead.'
+  };
+
+  if (RESERVED_KEYS[key]) {
+    throw new Error(RESERVED_KEYS[key]);
   }
 
   const activeDomainName = config.get('ACTIVE_DOMAIN');
@@ -132,13 +138,12 @@ function getAll() {
  * Resets config to default state.
  */
 function clear() {
-  config.store = {
-    ACTIVE_DOMAIN: 'default',
-    DOMAINS: [{
-      DOMAIN_NAME: 'default',
-      ...DEFAULT_DOMAIN_CONFIG
-    }]
-  };
+  config.clear();
+  config.set('ACTIVE_DOMAIN', 'default');
+  config.set('DOMAINS', [{
+    DOMAIN_NAME: 'default',
+    ...DEFAULT_DOMAIN_CONFIG
+  }]);
 }
 
 /**

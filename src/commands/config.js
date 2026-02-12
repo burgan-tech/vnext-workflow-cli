@@ -23,8 +23,12 @@ async function configCommand(action, key, value) {
       console.log(chalk.red('Usage: workflow config set <key> <value>'));
       return;
     }
-    config.set(key, value);
-    console.log(chalk.green(`✓ ${key} = ${value}`));
+    try {
+      config.set(key, value);
+      console.log(chalk.green(`✓ ${key} = ${value}`));
+    } catch (error) {
+      console.log(chalk.red(`✗ ${error.message}`));
+    }
   } else {
     console.log(chalk.red('Invalid action. Use: get or set'));
   }

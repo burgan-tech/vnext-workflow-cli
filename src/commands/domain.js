@@ -7,26 +7,33 @@ const VALID_KEYS = [
   'DOCKER_POSTGRES_CONTAINER', 'DEBUG_MODE'
 ];
 
+const NUMERIC_KEYS = ['DB_PORT'];
+const BOOLEAN_KEYS = ['AUTO_DISCOVER', 'USE_DOCKER', 'DEBUG_MODE'];
+
 /**
- * Parses string values to appropriate types.
- * "true"/"false" → boolean, numeric strings → number
+ * Coerces a string value to the correct type based on key.
+ * Only known numeric keys become numbers; only known boolean keys become booleans.
+ * All other values remain as strings.
  */
-function parseValue(value) {
-  if (value === 'true') return true;
-  if (value === 'false') return false;
-  const num = Number(value);
-  if (!isNaN(num) && String(value).trim() !== '') return num;
+function coerceValue(key, value) {
+  if (BOOLEAN_KEYS.includes(key)) {
+    return value === 'true';
+  }
+  if (NUMERIC_KEYS.includes(key)) {
+    const num = Number(value);
+    return isNaN(num) ? value : num;
+  }
   return value;
 }
 
 /**
- * Extracts and parses valid domain config options from Commander options object.
+ * Extracts and coerces valid domain config options from Commander options object.
  */
 function extractOptions(options) {
   const parsed = {};
   for (const key of VALID_KEYS) {
     if (options[key] !== undefined) {
-      parsed[key] = parseValue(options[key]);
+      parsed[key] = coerceValue(key, options[key]);
     }
   }
   return parsed;

@@ -483,12 +483,23 @@ When upgrading from an older version, the CLI automatically migrates the config 
   "DOMAINS": [
     {
       "DOMAIN_NAME": "default",
+      "AUTO_DISCOVER": true,
       "API_BASE_URL": "http://localhost:4201",
-      "DB_NAME": "vNext_WorkflowDb"
+      "API_VERSION": "v1",
+      "DB_HOST": "localhost",
+      "DB_PORT": 5432,
+      "DB_NAME": "vNext_WorkflowDb",
+      "DB_USER": "postgres",
+      "DB_PASSWORD": "postgres",
+      "USE_DOCKER": false,
+      "DOCKER_POSTGRES_CONTAINER": "vnext-postgres",
+      "DEBUG_MODE": false
     }
   ]
 }
 ```
+
+Your existing values are preserved. Any missing keys are filled in from defaults (11 keys total).
 
 No manual action is required. The migration happens automatically on first run.
 

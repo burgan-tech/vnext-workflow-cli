@@ -7,21 +7,28 @@ async function configCommand(action, key, value) {
       const val = config.get(key);
       console.log(chalk.cyan(`${key}:`), val);
     } else {
-      // Show all config
-      console.log(chalk.cyan.bold('\n📝 Current Configuration:\n'));
+      // Show all config with active domain info
       const all = config.getAll();
+      console.log(chalk.cyan.bold('\n📝 Current Configuration:\n'));
+      console.log(chalk.yellow(`  Active Domain: ${all.ACTIVE_DOMAIN}\n`));
       for (const [k, v] of Object.entries(all)) {
-        console.log(chalk.cyan(`${k}:`), chalk.white(v));
+        if (k === 'ACTIVE_DOMAIN' || k === 'DOMAIN_NAME') continue;
+        console.log(chalk.cyan(`  ${k}:`), chalk.white(v));
       }
-      console.log(chalk.dim(`\nConfig file: ${config.path}\n`));
+      console.log(chalk.dim(`\n  Config file: ${config.path}`));
+      console.log(chalk.dim(`  Tip: Use "wf domain list" to see all domains.\n`));
     }
   } else if (action === 'set') {
     if (!key || value === undefined) {
       console.log(chalk.red('Usage: workflow config set <key> <value>'));
       return;
     }
-    config.set(key, value);
-    console.log(chalk.green(`✓ ${key} = ${value}`));
+    try {
+      config.set(key, value);
+      console.log(chalk.green(`✓ ${key} = ${value}`));
+    } catch (error) {
+      console.log(chalk.red(`✗ ${error.message}`));
+    }
   } else {
     console.log(chalk.red('Invalid action. Use: get or set'));
   }

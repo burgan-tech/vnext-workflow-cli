@@ -254,10 +254,51 @@ wf csx --file x.csx # Process a single file
 **Purpose**: Configuration management
 
 ```bash
-wf config get              # Show all settings
+wf config get              # Show all settings (active domain)
 wf config get PROJECT_ROOT # Show a specific setting
-wf config set DB_PASSWORD pass # Change a setting
+wf config set DB_PASSWORD pass # Change a setting (on active domain)
 ```
+
+**Note:** `config get` and `config set` always operate on the **active domain**. Use `wf domain use <name>` to switch domains.
+
+---
+
+### `wf domain [action] [name] [options]`
+
+**Purpose**: Multidomain management
+
+Manage multiple domain configurations. Switch between domains with a single command. All CLI commands automatically use the active domain's settings.
+
+```bash
+# Show active domain name
+wf domain active
+
+# List all domains
+wf domain list
+wf domain --list
+
+# Add a new domain
+wf domain add staging --API_BASE_URL http://staging.example.com:4201 --DB_NAME vNext_StagingDb
+
+# Add a domain with multiple settings
+wf domain add production \
+  --API_BASE_URL http://prod.example.com:4201 \
+  --DB_NAME vNext_ProdDb \
+  --DB_HOST prod-db.example.com \
+  --DB_USER prod_user \
+  --DB_PASSWORD prod_pass
+
+# Switch active domain
+wf domain use staging
+
+# Remove a domain
+wf domain remove staging
+```
+
+**Notes:**
+- When adding a domain, any unspecified settings are inherited from the `default` domain.
+- The `default` domain cannot be removed.
+- If the active domain is removed, the CLI automatically switches to `default`.
 
 ---
 
@@ -265,7 +306,33 @@ wf config set DB_PASSWORD pass # Change a setting
 
 Config file location: `~/.config/vnext-workflow-cli/config.json`
 
-### All Available Settings
+### Config File Format
+
+The config file uses a domain-aware structure. Each domain has its own set of configuration values:
+
+```json
+{
+  "ACTIVE_DOMAIN": "default",
+  "DOMAINS": [
+    {
+      "DOMAIN_NAME": "default",
+      "AUTO_DISCOVER": true,
+      "API_BASE_URL": "http://localhost:4201",
+      "API_VERSION": "v1",
+      "DB_HOST": "localhost",
+      "DB_PORT": 5432,
+      "DB_NAME": "vNext_WorkflowDb",
+      "DB_USER": "postgres",
+      "DB_PASSWORD": "postgres",
+      "USE_DOCKER": false,
+      "DOCKER_POSTGRES_CONTAINER": "vnext-postgres",
+      "DEBUG_MODE": false
+    }
+  ]
+}
+```
+
+### All Available Settings (Per Domain)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -287,7 +354,7 @@ Config file location: `~/.config/vnext-workflow-cli/config.json`
 ### Quick Setup Examples
 
 ```bash
-# API settings
+# API settings (applied to active domain)
 wf config set API_BASE_URL http://localhost:4201
 wf config set API_VERSION v1
 
@@ -351,6 +418,26 @@ wf reset
 wf csx
 ```
 
+### 6. Multidomain Workflow
+```bash
+# Add domains
+wf domain add domain-a --API_BASE_URL http://localhost:4201 --DB_NAME vNext_DomainA
+wf domain add domain-b --API_BASE_URL http://localhost:4221 --DB_NAME vNext_DomainB
+
+# Work on Domain A
+wf domain use domain-a
+wf check
+wf update
+
+# Switch to Domain B - config is applied automatically
+wf domain use domain-b
+wf check
+wf update
+
+# See all domains
+wf domain list
+```
+
 ---
 
 ## 🔄 Command Comparison
@@ -361,6 +448,89 @@ wf csx
 | `update` | Yes | Delete + Publish | Publish | Update changed components |
 | `reset` | Yes | Delete + Publish | Publish | Force reset components |
 | `csx` | No | N/A | N/A | Only update CSX in JSONs |
+
+---
+
+## 🔀 Multidomain Support
+
+### Overview
+
+The CLI supports managing multiple domain configurations. Each domain has its own `API_BASE_URL`, `DB_NAME`, and other settings. Switch between domains with a single command.
+
+### Backward Compatibility
+
+- Existing single-domain configurations are automatically migrated to the new format.
+- A `default` domain is created with your existing settings.
+- If you don't use multidomain features, everything works exactly as before.
+- All `wf config get/set` commands continue to work (they operate on the active domain).
+
+### Migration
+
+When upgrading from an older version, the CLI automatically migrates the config file:
+
+**Before (old flat format):**
+```json
+{
+  "API_BASE_URL": "http://localhost:4201",
+  "DB_NAME": "vNext_WorkflowDb"
+}
+```
+
+**After (new domain-aware format):**
+```json
+{
+  "ACTIVE_DOMAIN": "default",
+  "DOMAINS": [
+    {
+      "DOMAIN_NAME": "default",
+      "AUTO_DISCOVER": true,
+      "API_BASE_URL": "http://localhost:4201",
+      "API_VERSION": "v1",
+      "DB_HOST": "localhost",
+      "DB_PORT": 5432,
+      "DB_NAME": "vNext_WorkflowDb",
+      "DB_USER": "postgres",
+      "DB_PASSWORD": "postgres",
+      "USE_DOCKER": false,
+      "DOCKER_POSTGRES_CONTAINER": "vnext-postgres",
+      "DEBUG_MODE": false
+    }
+  ]
+}
+```
+
+Your existing values are preserved. Any missing keys are filled in from defaults (11 keys total).
+
+No manual action is required. The migration happens automatically on first run.
+
+### Domain Commands
+
+| Command | Description |
+|---------|-------------|
+| `wf domain active` | Show active domain name |
+| `wf domain list` | List all domains with active indicator |
+| `wf domain --list` | List all domains (shorthand) |
+| `wf domain add <name> [options]` | Add a new domain |
+| `wf domain use <name>` | Switch active domain |
+| `wf domain remove <name>` | Remove a domain |
+
+### Available Options for `wf domain add`
+
+| Option | Description |
+|--------|-------------|
+| `--API_BASE_URL <url>` | API base URL |
+| `--API_VERSION <version>` | API version |
+| `--DB_HOST <host>` | Database host |
+| `--DB_PORT <port>` | Database port |
+| `--DB_NAME <name>` | Database name |
+| `--DB_USER <user>` | Database user |
+| `--DB_PASSWORD <password>` | Database password |
+| `--AUTO_DISCOVER <true/false>` | Auto discover components |
+| `--USE_DOCKER <true/false>` | Use Docker for DB |
+| `--DOCKER_POSTGRES_CONTAINER <name>` | Docker container name |
+| `--DEBUG_MODE <true/false>` | Debug mode |
+
+Unspecified options inherit from the `default` domain.
 
 ---
 
@@ -501,6 +671,7 @@ vnext-workflow-cli/
 │   │   ├── check.js
 │   │   ├── config.js
 │   │   ├── csx.js
+│   │   ├── domain.js        # Multidomain management
 │   │   ├── reset.js
 │   │   ├── sync.js
 │   │   └── update.js

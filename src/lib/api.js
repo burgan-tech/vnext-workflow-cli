@@ -1,9 +1,9 @@
 const axios = require('axios');
 
 /**
- * API bağlantısını test eder
+ * Tests the API connection
  * @param {string} baseUrl - API base URL
- * @returns {Promise<boolean>} Bağlantı durumu
+ * @returns {Promise<boolean>} Connection status
  */
 async function testApiConnection(baseUrl) {
   try {
@@ -17,9 +17,9 @@ async function testApiConnection(baseUrl) {
 }
 
 /**
- * Komponenti API'ye publish eder
+ * Publishes a component to the API
  * @param {string} baseUrl - API base URL
- * @param {Object} componentData - Komponent JSON verisi
+ * @param {Object} componentData - Component JSON data
  * @returns {Promise<Object>} API response
  */
 async function publishComponent(baseUrl, componentData) {
@@ -39,7 +39,7 @@ async function publishComponent(baseUrl, componentData) {
       data: response.data
     };
   } catch (error) {
-    // API hata detaylarını çıkar
+    // Extract API error details
     let errorMessage = error.message;
     let errorDetails = null;
     
@@ -68,10 +68,10 @@ async function publishComponent(baseUrl, componentData) {
 }
 
 /**
- * Sistemi yeniden başlatır
+ * Reinitializes the system
  * @param {string} baseUrl - API base URL
  * @param {string} version - API version
- * @returns {Promise<boolean>} Başarı durumu
+ * @returns {Promise<boolean>} Success status
  */
 async function reinitializeSystem(baseUrl, version) {
   const url = `${baseUrl}/api/${version}/definitions/re-initialize`;

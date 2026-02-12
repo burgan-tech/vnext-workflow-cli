@@ -21,42 +21,42 @@ program
 // Check command
 program
   .command('check')
-  .description('Sistem kontrolü (API, DB, klasörler)')
+  .description('System check (API, DB, directories)')
   .action(checkCommand);
 
 // CSX command
 program
   .command('csx')
-  .description('CSX dosyalarını güncelle')
-  .option('-a, --all', 'Tüm CSX dosyalarını güncelle')
-  .option('-f, --file <path>', 'Belirli bir CSX dosyasını güncelle')
+  .description('Update CSX files')
+  .option('-a, --all', 'Update all CSX files')
+  .option('-f, --file <path>', 'Update a specific CSX file')
   .action(csxCommand);
 
 // Update command
 program
   .command('update')
-  .description('Workflow\'ları güncelle')
-  .option('-a, --all', 'Tüm workflow\'ları güncelle')
-  .option('-f, --file <path>', 'Belirli bir workflow\'u güncelle')
+  .description('Update workflows')
+  .option('-a, --all', 'Update all workflows')
+  .option('-f, --file <path>', 'Update a specific workflow')
   .action(updateCommand);
 
 // Sync command
 program
   .command('sync')
-  .description('DB\'de eksik olanları ekle')
+  .description('Add missing entries to DB')
   .action(syncCommand);
 
 // Reset command
 program
   .command('reset')
-  .description('Workflow\'ları resetle (force update)')
+  .description('Reset workflows (force update)')
   .action(resetCommand);
 
 // Config command
 program
   .command('config')
-  .description('Konfigürasyon yönetimi')
-  .argument('<action>', 'set veya get')
+  .description('Configuration management')
+  .argument('<action>', 'set or get')
   .argument('[key]', 'Config key')
   .argument('[value]', 'Config value')
   .action(configCommand);
@@ -64,34 +64,34 @@ program
 // Domain command
 program
   .command('domain')
-  .description('Domain yönetimi (multidomain desteği)')
-  .addArgument(new Argument('[action]', 'Yapılacak işlem').choices(['active', 'add', 'use', 'list', 'remove']))
-  .argument('[name]', 'Domain adı')
-  .option('-l, --list', 'Domainleri listele')
+  .description('Domain management (multidomain support)')
+  .addArgument(new Argument('[action]', 'Action to perform').choices(['active', 'add', 'use', 'list', 'remove']))
+  .argument('[name]', 'Domain name')
+  .option('-l, --list', 'List domains')
   .option('--API_BASE_URL <url>', 'API base URL')
   .option('--API_VERSION <version>', 'API version')
-  .option('--DB_HOST <host>', 'Veritabanı host')
-  .option('--DB_PORT <port>', 'Veritabanı port')
-  .option('--DB_NAME <dbname>', 'Veritabanı adı')
-  .option('--DB_USER <user>', 'Veritabanı kullanıcı adı')
-  .option('--DB_PASSWORD <password>', 'Veritabanı şifresi')
-  .option('--AUTO_DISCOVER <value>', 'Otomatik keşif (true/false)')
-  .option('--USE_DOCKER <value>', 'Docker kullan (true/false)')
-  .option('--DOCKER_POSTGRES_CONTAINER <container>', 'Docker PostgreSQL container adı')
-  .option('--DEBUG_MODE <value>', 'Debug modu (true/false)')
+  .option('--DB_HOST <host>', 'Database host')
+  .option('--DB_PORT <port>', 'Database port')
+  .option('--DB_NAME <dbname>', 'Database name')
+  .option('--DB_USER <user>', 'Database username')
+  .option('--DB_PASSWORD <password>', 'Database password')
+  .option('--AUTO_DISCOVER <value>', 'Auto discover (true/false)')
+  .option('--USE_DOCKER <value>', 'Use Docker (true/false)')
+  .option('--DOCKER_POSTGRES_CONTAINER <container>', 'Docker PostgreSQL container name')
+  .option('--DEBUG_MODE <value>', 'Debug mode (true/false)')
   .addHelpText('after', `
-Örnekler:
-  wf domain active                                                   Aktif domain adını göster
-  wf domain list                                                     Domainleri listele
-  wf domain --list                                                   Domainleri listele
-  wf domain add domain-a --API_BASE_URL http://localhost:4201 --DB_NAME myDb   Yeni domain ekle
-  wf domain use domain-a                                             Aktif domain değiştir
-  wf domain remove domain-a                                          Domain sil
+Examples:
+  wf domain active                                                   Show active domain name
+  wf domain list                                                     List domains
+  wf domain --list                                                   List domains
+  wf domain add domain-a --API_BASE_URL http://localhost:4201 --DB_NAME myDb   Add a new domain
+  wf domain use domain-a                                             Switch active domain
+  wf domain remove domain-a                                          Remove a domain
 
-Notlar:
-  - Domain eklerken belirtilmeyen ayarlar default domain'den alınır.
-  - Default domain silinemez.
-  - Aktif domain silinirse otomatik olarak default'a geçilir.
+Notes:
+  - When adding a domain, unspecified settings are inherited from the default domain.
+  - The default domain cannot be deleted.
+  - If the active domain is deleted, it automatically switches back to default.
 `)
   .action(domainCommand);
 

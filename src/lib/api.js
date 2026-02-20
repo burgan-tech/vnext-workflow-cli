@@ -1,4 +1,14 @@
 const axios = require('axios');
+const https = require('node:https');
+const http = require('node:http');
+
+// Create axios instance with custom agents for both HTTP and HTTPS
+const apiClient = axios.create({
+  httpAgent: new http.Agent({ keepAlive: true }),
+  httpsAgent: new https.Agent({ 
+    rejectUnauthorized: false // Allow self-signed certificates
+  })
+});
 
 /**
  * Tests the API connection
@@ -7,7 +17,7 @@ const axios = require('axios');
  */
 async function testApiConnection(baseUrl) {
   try {
-    const response = await axios.get(`${baseUrl}/health`, {
+    const response = await apiClient.get(`${baseUrl}/health`, {
       timeout: 5000
     });
     return response.status === 200;
@@ -26,7 +36,7 @@ async function publishComponent(baseUrl, componentData) {
   const url = `${baseUrl}/api/v1/definitions/publish`;
   
   try {
-    const response = await axios.post(url, componentData, {
+    const response = await apiClient.post(url, componentData, {
       headers: {
         'accept': '*/*',
         'Content-Type': 'application/json'
@@ -76,7 +86,7 @@ async function publishComponent(baseUrl, componentData) {
 async function reinitializeSystem(baseUrl, version) {
   const url = `${baseUrl}/api/${version}/definitions/re-initialize`;
   try {
-    await axios.get(url, { timeout: 10000 });
+    await apiClient.get(url, { timeout: 10000 });
     return true;
   } catch (error) {
     return false;

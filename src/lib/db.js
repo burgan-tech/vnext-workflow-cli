@@ -5,11 +5,11 @@ const util = require('util');
 const execPromise = util.promisify(exec);
 
 /**
- * DB bağlantısını test eder
+ * Tests the DB connection
  */
 async function testDbConnection(dbConfig) {
   if (dbConfig.useDocker) {
-    // Docker üzerinden test
+    // Test via Docker
     try {
       const cmd = `docker exec ${dbConfig.dockerContainer} psql -U ${dbConfig.user} -d ${dbConfig.database} -c "SELECT 1;"`;
       await execPromise(cmd);
@@ -18,7 +18,7 @@ async function testDbConnection(dbConfig) {
       return false;
     }
   } else {
-    // Direkt bağlantı
+    // Direct connection
     const client = new Client({
       host: dbConfig.host,
       port: dbConfig.port,
@@ -39,15 +39,15 @@ async function testDbConnection(dbConfig) {
 }
 
 /**
- * Workflow'un DB'deki ID'sini bulur
- * NOT: Version kontrolü yapmıyoruz, sadece Key'e bakıyoruz (bash script gibi)
+ * Finds the workflow's ID in the DB
+ * NOTE: We don't check version, only the Key (like the bash script)
  */
 async function getInstanceId(dbConfig, schema, key, version) {
   const dbSchema = schema.replace(/-/g, '_');
   const query = `SELECT "Id" FROM "${dbSchema}"."Instances" WHERE "Key" = $1 ORDER BY "CreatedAt" DESC LIMIT 1`;
   
   if (dbConfig.useDocker) {
-    // Docker üzerinden - SQL içindeki double quote'ları backslash ile escape et
+    // Via Docker - escape double quotes in SQL with backslash
     const cmd = `docker exec ${dbConfig.dockerContainer} psql -U ${dbConfig.user} -d ${dbConfig.database} -t -c "SELECT \\"Id\\" FROM \\"${dbSchema}\\".\\"Instances\\" WHERE \\"Key\\" = '${key}' ORDER BY \\"CreatedAt\\" DESC LIMIT 1"`;
     try {
       const { stdout } = await execPromise(cmd);
@@ -57,7 +57,7 @@ async function getInstanceId(dbConfig, schema, key, version) {
       return null;
     }
   } else {
-    // Direkt bağlantı
+    // Direct connection
     const client = new Client({
       host: dbConfig.host,
       port: dbConfig.port,
@@ -78,13 +78,13 @@ async function getInstanceId(dbConfig, schema, key, version) {
 }
 
 /**
- * Workflow'u DB'den siler
+ * Deletes a workflow from the DB
  */
 async function deleteWorkflow(dbConfig, schema, instanceId) {
   const dbSchema = schema.replace(/-/g, '_');
   
   if (dbConfig.useDocker) {
-    // Docker üzerinden - Double quote'ları escape et
+    // Via Docker - escape double quotes
     const cmd = `docker exec ${dbConfig.dockerContainer} psql -U ${dbConfig.user} -d ${dbConfig.database} -c "DELETE FROM \\"${dbSchema}\\".\\"Instances\\" WHERE \\"Id\\" = '${instanceId}'"`;
     try {
       await execPromise(cmd);
@@ -93,7 +93,7 @@ async function deleteWorkflow(dbConfig, schema, instanceId) {
       return false;
     }
   } else {
-    // Direkt bağlantı
+    // Direct connection
     const query = `DELETE FROM "${dbSchema}"."Instances" WHERE "Id" = $1`;
     const client = new Client({
       host: dbConfig.host,

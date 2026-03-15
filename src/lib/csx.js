@@ -1,7 +1,7 @@
 const fs = require('fs').promises;
 const path = require('path');
 const { glob } = require('glob');
-const { discoverComponents, findAllJsonFiles } = require('./discover');
+const { discoverComponents, findAllJsonFiles, findJsonInComponent } = require('./discover');
 
 /**
  * Encodes CSX file to Base64
@@ -21,28 +21,53 @@ async function encodeToBase64(csxPath) {
  * @returns {Promise<string[]>} Matching JSON file paths
  */
 async function findJsonFilesForCsx(csxPath, projectRoot) {
-  const csxBaseName = path.basename(csxPath);
-  
-  // Get discovered components (only paths defined in vnext.config.json)
-  const discovered = await discoverComponents(projectRoot);
-  
-  // Get all JSON files from discovered components only
-  const jsonFileInfos = await findAllJsonFiles(discovered);
-  
-  // Filter JSONs that reference the CSX
+  // Derive the component directory from the CSX path:
+  // CSX files always live under a "src/" subfolder of their component directory.
+  // e.g. core/Workflows/contract/src/AlwaysTrueRule.csx
+  //   => component dir: core/Workflows/contract/
+  // Only scan JSON files within that specific component directory so that
+  // same-named CSX files in other components do not cross-contaminate.
+  const parts = csxPath.split(path.sep);
+  const srcIndex = parts.lastIndexOf('src');
+
+  let componentDir;
+  if (srcIndex !== -1) {
+    componentDir = parts.slice(0, srcIndex).join(path.sep);
+  } else {
+    // Fallback: search all discovered components (original behaviour)
+    const discovered = await discoverComponents(projectRoot);
+    const jsonFileInfos = await findAllJsonFiles(discovered);
+    const csxLocation = getCsxLocation(csxPath, projectRoot);
+    const matchingJsons = [];
+    for (const jsonInfo of jsonFileInfos) {
+      try {
+        const content = await fs.readFile(jsonInfo.path, 'utf8');
+        if (content.includes(csxLocation)) {
+          matchingJsons.push(jsonInfo.path);
+        }
+      } catch (error) {
+        // Skip unreadable files
+      }
+    }
+    return matchingJsons;
+  }
+
+  // Scan only the JSON files inside this component's directory
+  const csxLocation = getCsxLocation(csxPath, projectRoot);
+  const jsonFiles = await findJsonInComponent(componentDir);
   const matchingJsons = [];
-  
-  for (const jsonInfo of jsonFileInfos) {
+
+  for (const jsonFile of jsonFiles) {
     try {
-      const content = await fs.readFile(jsonInfo.path, 'utf8');
-      if (content.includes(csxBaseName)) {
-        matchingJsons.push(jsonInfo.path);
+      const content = await fs.readFile(jsonFile, 'utf8');
+      if (content.includes(csxLocation)) {
+        matchingJsons.push(jsonFile);
       }
     } catch (error) {
       // Skip unreadable files
     }
   }
-  
+
   return matchingJsons;
 }
 

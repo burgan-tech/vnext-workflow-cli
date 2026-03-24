@@ -33,6 +33,9 @@ permissions:
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write  # Required for OIDC Trusted Publishing to npm
     
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -47,7 +50,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '20.x'
+        node-version: '24'
         registry-url: 'https://registry.npmjs.org'
         always-auth: false
         cache: 'npm'
@@ -372,7 +375,7 @@ jobs:
           echo "💡 Use 'force_publish: true' to republish"
           exit 0
         fi
-        npm publish --access public
+        npm publish
         echo "published=true" >> $GITHUB_OUTPUT
         echo "✅ Successfully published to GitHub Packages"
 

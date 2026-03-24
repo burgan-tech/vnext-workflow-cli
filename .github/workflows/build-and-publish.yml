@@ -28,6 +28,7 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write  # Required for OIDC Trusted Publishing to npm
 
 jobs:
   build-and-publish:
@@ -49,8 +50,6 @@ jobs:
         node-version: '20.x'
         registry-url: 'https://registry.npmjs.org'
         cache: 'npm'
-      env:
-        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     
     - name: Calculate version
       id: version
@@ -324,35 +323,6 @@ jobs:
           fi
         fi
     
-    - name: Verify NPM authentication
-      if: github.event.inputs.registry_target != 'github'
-      run: |
-        echo "🔐 Verifying NPM authentication..."
-        
-        # Verify token is valid by checking whoami
-        echo "Checking NPM authentication..."
-        if npm whoami > /dev/null 2>&1; then
-          NPM_USER=$(npm whoami)
-          echo "✅ Authenticated as: $NPM_USER"
-        else
-          echo "❌ NPM authentication failed"
-          echo "Please verify that NPM_TOKEN secret is set and has the correct permissions"
-          echo "The token must be of type 'Automation' with publish permissions"
-          exit 1
-        fi
-        
-        # Check if we can access the scope
-        PACKAGE_NAME=$(node -p "require('./package.json').name")
-        SCOPE=$(echo "$PACKAGE_NAME" | cut -d'/' -f1 | sed 's/@//')
-        echo "Checking access to scope: $SCOPE"
-        
-        # Try to view any package in the scope to verify access
-        if npm view "@${SCOPE}/" > /dev/null 2>&1; then
-          echo "✅ Have access to scope: $SCOPE"
-        else
-          echo "⚠️  Cannot verify scope access (this may be normal for new scopes)"
-        fi
-    
     - name: Publish to NPM
       id: publish
       run: |
@@ -402,14 +372,8 @@ jobs:
               PUBLISH_EXIT_CODE=$?
               echo "❌ NPM publish failed (exit code: $PUBLISH_EXIT_CODE)"
               echo ""
-              echo "=== Authentication Check ==="
-              if npm whoami > /dev/null 2>&1; then
-                echo "✅ Authenticated as: $(npm whoami)"
-              else
-                echo "❌ Not authenticated"
-              fi
-              echo ""
-              echo "Please check the NPM_TOKEN permissions and ensure it has 'Automation' type."
+              echo "Publishing uses OIDC Trusted Publishing — no NPM_TOKEN required."
+              echo "Common causes: OIDC not configured on npm, id-token permission missing, or scope/package mismatch."
               exit 1
             fi
           else
@@ -448,47 +412,20 @@ jobs:
                 PUBLISH_EXIT_CODE=$?
                 echo "❌ Failed to publish to NPM (exit code: $PUBLISH_EXIT_CODE)"
                 echo ""
-                
-                # Capture npm error output for debugging
-                echo "=== NPM Error Details ==="
-                npm publish --access public 2>&1 | head -20 || true
-                echo ""
-                
-                echo "=== Authentication Check ==="
-                if npm whoami > /dev/null 2>&1; then
-                  echo "✅ Authenticated as: $(npm whoami)"
-                else
-                  echo "❌ Not authenticated"
-                fi
-                echo ""
-                
                 echo "=== Registry Configuration ==="
                 echo "Registry: $(npm config get registry)"
                 echo "Scope registry: $(npm config get @burgan-tech:registry || echo 'not set')"
                 echo ""
-                
-                echo "Common causes for 404 errors:"
-                echo "1. NPM_TOKEN doesn't have permission to publish to '@burgan-tech' scope"
-                echo "2. The scope '@burgan-tech' needs to be created on NPM"
-                echo "3. The token is invalid or expired"
-                echo "4. The token type is incorrect (needs 'Automation' type for CI/CD)"
+                echo "Publishing uses OIDC Trusted Publishing — no NPM_TOKEN required."
+                echo "Common causes for failures:"
+                echo "1. The Trusted Publisher is not configured on npmjs.com for this repository"
+                echo "2. The scope '@burgan-tech' does not exist on npmjs.com"
+                echo "3. The 'id-token: write' permission is missing from the workflow"
                 echo ""
-                echo "To fix:"
+                echo "To verify Trusted Publisher setup:"
                 echo "1. Go to https://www.npmjs.com/settings/burgan-tech/packages"
-                echo "2. Ensure the scope exists and you have publish permissions"
-                echo "3. Create a new NPM token with 'Automation' type at https://www.npmjs.com/settings/burgan-tech/tokens"
-                echo "   - Token type MUST be 'Automation' (not 'Publish' or 'Read-only')"
-                echo "   - The token must have 'Publish packages' permission"
-                echo "4. Update the NPM_TOKEN secret in GitHub repository settings"
-                echo "   - Repository Settings > Secrets and variables > Actions > NPM_TOKEN"
-                echo ""
-                echo "Note: npm publish should automatically create the package if it doesn't exist."
-                echo "If you get a 404 error, it's usually a permissions issue with the NPM_TOKEN."
-                echo ""
-                echo "For scoped packages, ensure:"
-                echo "- The scope '@burgan-tech' exists on npmjs.com"
-                echo "- Your npm account has access to the scope"
-                echo "- The token has 'Automation' type with publish permissions"
+                echo "2. Select the package > Settings > Trusted Publishers"
+                echo "3. Ensure this repository and workflow are listed"
                 exit 1
               fi
             fi

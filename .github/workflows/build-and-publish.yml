@@ -324,6 +324,12 @@ jobs:
           fi
         fi
     
+    - name: Configure npm for OIDC publishing
+      if: github.event.inputs.registry_target != 'github'
+      run: |
+        # Remove token auth entry so npm uses OIDC instead of falling back to empty token auth
+        npm config delete //registry.npmjs.org/:_authToken || true
+
     - name: Publish to NPM
       id: publish
       run: |

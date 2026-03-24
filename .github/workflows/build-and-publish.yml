@@ -36,6 +36,8 @@ jobs:
 
     permissions:
       id-token: write  # Required for OIDC Trusted Publishing to npm
+      contents: write  # Required for creating git tags and releases
+      packages: write  # Required for publishing to GitHub Packages
     
     outputs:
       version: ${{ steps.version.outputs.version }}

@@ -351,7 +351,7 @@ jobs:
         (github.event.inputs.registry_target == '' ||
          github.event.inputs.registry_target == 'npmjs' ||
          github.event.inputs.registry_target == 'both')
-      uses: JS-DevTools/npm-publish@v3
+      uses: JS-DevTools/npm-publish@v4
       with:
         access: public
 

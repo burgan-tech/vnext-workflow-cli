@@ -324,14 +324,21 @@ jobs:
           fi
         fi
     
-    - name: Configure npm for OIDC publishing
+    - name: Get OIDC token for npm Trusted Publishing
       if: github.event.inputs.registry_target != 'github'
+      id: npm-oidc
       run: |
-        # Remove token auth entry so npm uses OIDC instead of falling back to empty token auth
-        npm config delete //registry.npmjs.org/:_authToken || true
+        OIDC_TOKEN=$(curl -sSfL \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm" \
+          -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+          | jq -r '.value')
+        echo "::add-mask::$OIDC_TOKEN"
+        echo "token=$OIDC_TOKEN" >> $GITHUB_OUTPUT
 
     - name: Publish to NPM
       id: publish
+      env:
+        NODE_AUTH_TOKEN: ${{ steps.npm-oidc.outputs.token }}
       run: |
         VERSION="${{ steps.version.outputs.version }}"
         PACKAGE_NAME=$(node -p "require('./package.json').name")

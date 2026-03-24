@@ -324,173 +324,70 @@ jobs:
           fi
         fi
     
-    - name: Get OIDC token for npm Trusted Publishing
+    - name: Check version on NPM
+      id: version-check
       if: github.event.inputs.registry_target != 'github'
-      id: npm-oidc
       run: |
-        OIDC_TOKEN=$(curl -sSfL \
-          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm" \
-          -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-          | jq -r '.value')
-        echo "::add-mask::$OIDC_TOKEN"
-        echo "token=$OIDC_TOKEN" >> $GITHUB_OUTPUT
-
-    - name: Publish to NPM
-      id: publish
-      env:
-        NODE_AUTH_TOKEN: ${{ steps.npm-oidc.outputs.token }}
-      run: |
-        VERSION="${{ steps.version.outputs.version }}"
         PACKAGE_NAME=$(node -p "require('./package.json').name")
-        REGISTRY_TARGET="${{ github.event.inputs.registry_target || 'npmjs' }}"
-        FORCE_PUBLISH="${{ github.event.inputs.force_publish || 'false' }}"
-        
-        echo "📦 Publishing package: $PACKAGE_NAME@$VERSION"
-        echo "🎯 Target registry: $REGISTRY_TARGET"
-        echo "🔧 Force publish: $FORCE_PUBLISH"
-        
-        PUBLISHED=false
-        SUCCESS_COUNT=0
-        TOTAL_ATTEMPTS=0
-        
-        # Publish to NPM
-        if [ "$REGISTRY_TARGET" == "npmjs" ] || [ "$REGISTRY_TARGET" == "both" ]; then
-          TOTAL_ATTEMPTS=$((TOTAL_ATTEMPTS + 1))
-          echo ""
-          echo "📤 Publishing to NPM (npmjs.org)..."
-          
-          # Verify npm configuration
-          echo "NPM registry: $(npm config get registry)"
-          echo "NPM scope registry: $(npm config get @burgan-tech:registry || echo 'not set')"
-          
-          # Check if package exists on NPM
-          PACKAGE_EXISTS=false
-          if npm view "$PACKAGE_NAME" version > /dev/null 2>&1; then
-            PACKAGE_EXISTS=true
-            echo "✅ Package exists on NPM"
-          else
-            echo "ℹ️  Package does not exist on NPM yet - will create it on first publish"
-          fi
-          
-          if [ "$FORCE_PUBLISH" == "true" ]; then
-            echo "⚠️  Force publish enabled - will attempt to publish even if version exists"
-            
-            # Ensure we're using the correct registry
-            npm config set registry https://registry.npmjs.org/
-            
-            if npm publish --access public; then
-              echo "✅ Successfully published to NPM"
-              PUBLISHED=true
-              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-            else
-              PUBLISH_EXIT_CODE=$?
-              echo "❌ NPM publish failed (exit code: $PUBLISH_EXIT_CODE)"
-              echo ""
-              echo "Publishing uses OIDC Trusted Publishing — no NPM_TOKEN required."
-              echo "Common causes: OIDC not configured on npm, id-token permission missing, or scope/package mismatch."
-              exit 1
-            fi
-          else
-            # Check if version already exists (only if package exists)
-            VERSION_EXISTS=false
-            if [ "$PACKAGE_EXISTS" == "true" ]; then
-              if npm view "$PACKAGE_NAME@$VERSION" version > /dev/null 2>&1; then
-                VERSION_EXISTS=true
-                echo "❌ Version $VERSION already exists on NPM"
-                echo "💡 Tip: Use 'force_publish: true' to republish existing versions"
-              fi
-            fi
-            
-            if [ "$VERSION_EXISTS" == "true" ]; then
-              echo "Skipping publish - version already exists"
-            else
-              # Try to publish (will create package if it doesn't exist)
-              if [ "$PACKAGE_EXISTS" == "false" ]; then
-                echo "📦 Creating new package on NPM..."
-              else
-                echo "📦 Publishing version $VERSION..."
-              fi
-              
-              # Ensure we're using the correct registry
-              npm config set registry https://registry.npmjs.org/
-              
-              # Try to publish
-              if npm publish --access public; then
-                echo "✅ Successfully published to NPM"
-                if [ "$PACKAGE_EXISTS" == "false" ]; then
-                  echo "🎉 Package created successfully!"
-                fi
-                PUBLISHED=true
-                SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-              else
-                PUBLISH_EXIT_CODE=$?
-                echo "❌ Failed to publish to NPM (exit code: $PUBLISH_EXIT_CODE)"
-                echo ""
-                echo "=== Registry Configuration ==="
-                echo "Registry: $(npm config get registry)"
-                echo "Scope registry: $(npm config get @burgan-tech:registry || echo 'not set')"
-                echo ""
-                echo "Publishing uses OIDC Trusted Publishing — no NPM_TOKEN required."
-                echo "Common causes for failures:"
-                echo "1. The Trusted Publisher is not configured on npmjs.com for this repository"
-                echo "2. The scope '@burgan-tech' does not exist on npmjs.com"
-                echo "3. The 'id-token: write' permission is missing from the workflow"
-                echo ""
-                echo "To verify Trusted Publisher setup:"
-                echo "1. Go to https://www.npmjs.com/settings/burgan-tech/packages"
-                echo "2. Select the package > Settings > Trusted Publishers"
-                echo "3. Ensure this repository and workflow are listed"
-                exit 1
-              fi
-            fi
-          fi
-        fi
-        
-        # Publish to GitHub Packages
-        if [ "$REGISTRY_TARGET" == "github" ] || [ "$REGISTRY_TARGET" == "both" ]; then
-          TOTAL_ATTEMPTS=$((TOTAL_ATTEMPTS + 1))
-          echo ""
-          echo "📤 Publishing to GitHub Packages..."
-          
-          # Configure npm to use GitHub Packages
-          npm config set @burgan-tech:registry https://npm.pkg.github.com
-          npm config set //npm.pkg.github.com/:_authToken ${{ secrets.GITHUB_TOKEN }}
-          
-          if [ "$FORCE_PUBLISH" == "true" ]; then
-            echo "⚠️  Force publish enabled - will attempt to publish even if version exists"
-            npm publish --access public || echo "⚠️  GitHub Packages publish failed (may already exist)"
-          else
-            # Check if version already exists (basic check)
-            if npm view "$PACKAGE_NAME@$VERSION" version > /dev/null 2>&1; then
-              echo "❌ Version $VERSION already exists on GitHub Packages"
-              echo "💡 Tip: Use 'force_publish: true' to republish existing versions"
-            else
-              if npm publish --access public; then
-                echo "✅ Successfully published to GitHub Packages"
-                PUBLISHED=true
-                SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-              else
-                echo "❌ Failed to publish to GitHub Packages"
-              fi
-            fi
-          fi
-        fi
-        
-        echo "published=$PUBLISHED" >> $GITHUB_OUTPUT
-        
-        echo "📊 Publication Summary:"
-        echo "   Successfully published: $SUCCESS_COUNT/$TOTAL_ATTEMPTS registries"
-        
-        if [ "$SUCCESS_COUNT" -eq 0 ]; then
-          echo "❌ Failed to publish to any registry"
-          if [ "${{ github.event.inputs.force_publish }}" != "true" ]; then
-            echo "💡 Tip: If you want to republish existing versions, use the 'force_publish' option"
-          fi
-          exit 1
-        elif [ "$SUCCESS_COUNT" -lt "$TOTAL_ATTEMPTS" ]; then
-          echo "⚠️  Some registries failed, but at least one succeeded"
+        VERSION="${{ steps.version.outputs.version }}"
+        FORCE="${{ github.event.inputs.force_publish || 'false' }}"
+        echo "📦 Package: $PACKAGE_NAME@$VERSION"
+        if [ "$FORCE" == "true" ]; then
+          echo "skip=false" >> $GITHUB_OUTPUT
+          echo "⚠️  Force publish enabled — skipping version check"
+        elif npm view "$PACKAGE_NAME@$VERSION" version > /dev/null 2>&1; then
+          echo "skip=true" >> $GITHUB_OUTPUT
+          echo "❌ Version $VERSION already exists on NPM"
+          echo "💡 Use 'force_publish: true' to republish"
         else
-          echo "🎉 Published to all target registries successfully!"
+          echo "skip=false" >> $GITHUB_OUTPUT
+          echo "✅ Version $VERSION is new — proceeding"
+        fi
+
+    - name: Publish to NPM (OIDC Trusted Publishing)
+      id: npm-publish
+      if: |
+        steps.version-check.outputs.skip != 'true' &&
+        (github.event.inputs.registry_target == '' ||
+         github.event.inputs.registry_target == 'npmjs' ||
+         github.event.inputs.registry_target == 'both')
+      uses: JS-DevTools/npm-publish@v3
+      with:
+        access: public
+
+    - name: Publish to GitHub Packages
+      id: github-publish
+      if: |
+        github.event.inputs.registry_target == 'github' ||
+        github.event.inputs.registry_target == 'both'
+      run: |
+        PACKAGE_NAME=$(node -p "require('./package.json').name")
+        VERSION="${{ steps.version.outputs.version }}"
+        FORCE="${{ github.event.inputs.force_publish || 'false' }}"
+        echo "📤 Publishing to GitHub Packages..."
+        npm config set @burgan-tech:registry https://npm.pkg.github.com
+        npm config set //npm.pkg.github.com/:_authToken ${{ secrets.GITHUB_TOKEN }}
+        if [ "$FORCE" != "true" ] && npm view "$PACKAGE_NAME@$VERSION" version > /dev/null 2>&1; then
+          echo "❌ Version $VERSION already exists on GitHub Packages"
+          echo "💡 Use 'force_publish: true' to republish"
+          exit 0
+        fi
+        npm publish --access public
+        echo "published=true" >> $GITHUB_OUTPUT
+        echo "✅ Successfully published to GitHub Packages"
+
+    - name: Set publish result
+      id: publish
+      if: always()
+      run: |
+        NPM_OK="${{ steps.npm-publish.outcome }}"
+        GH_OK="${{ steps.github-publish.outputs.published }}"
+        if [ "$NPM_OK" == "success" ] || [ "$GH_OK" == "true" ]; then
+          echo "published=true" >> $GITHUB_OUTPUT
+          echo "🎉 Published successfully!"
+        else
+          echo "published=false" >> $GITHUB_OUTPUT
+          echo "❌ Publish failed or skipped for all registries"
         fi
     
     - name: Create Git Tag

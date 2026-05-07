@@ -4,6 +4,10 @@ const { program, Argument } = require('commander');
 const chalk = require('chalk');
 const pkg = require('../package.json');
 
+// Config
+const config = require('../src/lib/config');
+const { printActiveDomainBanner } = require('../src/lib/ui');
+
 // Commands
 const checkCommand = require('../src/commands/check');
 const csxCommand = require('../src/commands/csx');
@@ -17,6 +21,18 @@ program
   .name('workflow')
   .description('vNext Workflow Manager CLI')
   .version(pkg.version);
+
+// Auto-resolve domain and show banner before each command
+program.hook('preAction', (thisCommand, actionCommand) => {
+  if (actionCommand.name() === 'domain') return;
+
+  const result = config.resolveWorkspaceDomain(process.cwd());
+  if (result.resolved && result.switched) {
+    console.log(chalk.dim(`  [auto] Domain switched to "${result.domain}" (from vnext.config.json)`));
+  }
+
+  printActiveDomainBanner();
+});
 
 // Check command
 program

@@ -24,10 +24,11 @@ npm install -g @burgan-tech/vnext-workflow-cli
 npm install @burgan-tech/vnext-workflow-cli
 ```
 
-After installation, you can use the CLI with:
+After installation, you can use the CLI with any of these aliases:
 ```bash
-wf --version
-wf check
+wf --version       # short alias
+vnext --version    # alternative alias (recommended for Windows)
+workflow --version # full name
 ```
 
 ### Install from Source
@@ -117,6 +118,8 @@ wf check
 ```
 
 **Note:** The CLI automatically uses the current working directory as the project root. Just `cd` into your project folder before running commands.
+
+> **Tip:** All examples use `wf` but you can also use `vnext` or `workflow` interchangeably. The `vnext` alias is recommended on Windows where `wf` may conflict with existing system commands.
 
 ### Basic Usage
 
@@ -420,18 +423,20 @@ wf csx
 
 ### 6. Multidomain Workflow
 ```bash
-# Add domains
+# Add domains (one-time setup)
 wf domain add domain-a --API_BASE_URL http://localhost:4201 --DB_NAME vNext_DomainA
 wf domain add domain-b --API_BASE_URL http://localhost:4221 --DB_NAME vNext_DomainB
 
-# Work on Domain A
-wf domain use domain-a
-wf check
-wf update
+# Option A: Auto-switch via vnext.config.json (recommended)
+# Just cd into the project - domain profile switches automatically
+cd ~/projects/domain-a-app   # vnext.config.json has "domain": "domain-a"
+wf update                    # auto-switches to domain-a profile
 
-# Switch to Domain B - config is applied automatically
-wf domain use domain-b
-wf check
+cd ~/projects/domain-b-app   # vnext.config.json has "domain": "domain-b"
+wf update                    # auto-switches to domain-b profile
+
+# Option B: Manual switch (still works)
+wf domain use domain-a
 wf update
 
 # See all domains
@@ -456,6 +461,35 @@ wf domain list
 ### Overview
 
 The CLI supports managing multiple domain configurations. Each domain has its own `API_BASE_URL`, `DB_NAME`, and other settings. Switch between domains with a single command.
+
+### Auto Domain Resolution
+
+When you run any command inside a vNext workspace that contains a `vnext.config.json`, the CLI **automatically** switches to the matching domain profile based on the `domain` field in the config file. This eliminates the need to manually run `wf domain use <name>` every time you switch between projects.
+
+**How it works:**
+1. Before each command (except `wf domain`), the CLI checks if `vnext.config.json` exists in the current directory.
+2. If found, it reads the `domain` field and looks for a matching CLI domain profile (`DOMAINS[].DOMAIN_NAME`).
+3. If a match is found and it differs from the current active domain, it silently switches and shows a dim log message:
+   ```
+   [auto] Domain switched to "onboarding" (from vnext.config.json)
+   ```
+4. If no `vnext.config.json` is found or no matching profile exists, the current active domain is kept (no error).
+
+**Example:** You have two projects and two domain profiles:
+```bash
+# Add domain profiles once
+wf domain add core --DB_NAME vNext_Core
+wf domain add onboarding --DB_NAME vNext_Onboarding
+
+# Now just cd into the project and run commands - domain switches automatically
+cd ~/projects/core-app        # has vnext.config.json with "domain": "core"
+wf update                     # auto-switches to "core" profile
+
+cd ~/projects/onboarding-app  # has vnext.config.json with "domain": "onboarding"
+wf update                     # auto-switches to "onboarding" profile
+```
+
+> **Note:** The `wf domain` command is excluded from auto-resolution so that manual domain management is never interfered with.
 
 ### Backward Compatibility
 
@@ -583,8 +617,9 @@ wf config get DOCKER_POSTGRES_CONTAINER
 
 ### "npm link not working"
 ```bash
-# Use alias
+# Use alias (wf or vnext)
 echo 'alias wf="node $(pwd)/bin/workflow.js"' >> ~/.bashrc
+echo 'alias vnext="node $(pwd)/bin/workflow.js"' >> ~/.bashrc
 source ~/.bashrc
 ```
 

@@ -8,34 +8,7 @@ const { publishComponent, reinitializeSystem } = require('../lib/api');
 const { getInstanceId, deleteWorkflow } = require('../lib/db');
 const { getJsonMetadata, detectComponentType } = require('../lib/workflow');
 const { processCsxFile, findAllCsx } = require('../lib/csx');
-
-// Logging helpers
-const LOG = {
-  separator: () => console.log(chalk.cyan('═'.repeat(60))),
-  subSeparator: () => console.log(chalk.cyan('─'.repeat(60))),
-  header: (text) => {
-    console.log();
-    LOG.separator();
-    console.log(chalk.cyan.bold(`  ${text}`));
-    LOG.separator();
-  },
-  success: (text) => console.log(chalk.green(`  ✓ ${text}`)),
-  error: (text) => console.log(chalk.red(`  ✗ ${text}`)),
-  warning: (text) => console.log(chalk.yellow(`  ⚠ ${text}`)),
-  info: (text) => console.log(chalk.dim(`  ○ ${text}`)),
-  component: (type, name, status, detail = '') => {
-    const typeLabel = chalk.cyan(`[${type}]`);
-    const nameLabel = chalk.white(name);
-    if (status === 'success') {
-      console.log(`  ${typeLabel} ${chalk.green('✓')} ${nameLabel} ${chalk.dim(detail)}`);
-    } else if (status === 'error') {
-      console.log(`  ${typeLabel} ${chalk.red('✗')} ${nameLabel}`);
-      if (detail) console.log(chalk.red(`    └─ ${detail}`));
-    } else if (status === 'skip') {
-      console.log(`  ${typeLabel} ${chalk.dim('○')} ${nameLabel} ${chalk.dim(detail)}`);
-    }
-  }
-};
+const { LOG, printApiError, printErrorSummaryTable } = require('../lib/ui');
 
 async function syncCommand() {
   LOG.header('SYSTEM SYNC - Add Missing Components');
@@ -76,10 +49,6 @@ async function syncCommand() {
     version: config.get('API_VERSION'),
     domain: domain
   };
-  
-  console.log(chalk.dim(`  Domain: ${domain}`));
-  console.log(chalk.dim(`  API: ${apiConfig.baseUrl}`));
-  console.log();
   
   // Discover folders
   const discoverSpinner = ora('Scanning folders...').start();
@@ -183,9 +152,9 @@ async function syncCommand() {
         LOG.component(type, fileName, 'success', '→ published');
         componentStats[type].success++;
       } else {
-        LOG.component(type, fileName, 'error', result.error);
+        printApiError(result, type, fileName);
         componentStats[type].failed++;
-        errors.push({ type, file: fileName, error: result.error });
+        errors.push({ type, file: fileName, error: result.error, statusCode: result.statusCode, apiError: result.apiError });
       }
     } catch (error) {
       const errorMsg = error.message || 'Unknown error';
@@ -239,20 +208,14 @@ async function syncCommand() {
   }
   
   // Errors
-  if (errors.length > 0 || csxResults.errors.length > 0) {
+  const allErrors = [
+    ...errors,
+    ...csxResults.errors.map(e => ({ type: 'CSX', file: e.file, error: e.error }))
+  ];
+  if (allErrors.length > 0) {
     console.log();
     LOG.subSeparator();
-    console.log(chalk.red.bold('\n  ERRORS:\n'));
-    
-    for (const err of errors) {
-      console.log(chalk.red(`  [${err.type}] ${err.file}`));
-      console.log(chalk.dim(`    └─ ${err.error}`));
-    }
-    
-    for (const err of csxResults.errors) {
-      console.log(chalk.red(`  [CSX] ${err.file}`));
-      console.log(chalk.dim(`    └─ ${err.error}`));
-    }
+    printErrorSummaryTable(allErrors);
   }
   
   LOG.separator();

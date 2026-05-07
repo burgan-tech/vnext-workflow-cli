@@ -1,4 +1,6 @@
 const Conf = require('conf');
+const fs = require('fs');
+const path = require('path');
 
 // Default config values for a domain
 const DEFAULT_DOMAIN_CONFIG = {
@@ -224,6 +226,43 @@ function removeDomain(name) {
   }
 }
 
+/**
+ * Resolves the active domain from vnext.config.json in the given project root.
+ * If a matching CLI domain profile exists, silently switches to it.
+ * @param {string} projectRoot - Project root folder (typically cwd)
+ * @returns {Object} Resolution result with { resolved, switched, domain, previous, reason }
+ */
+function resolveWorkspaceDomain(projectRoot) {
+  try {
+    const configPath = path.join(projectRoot, 'vnext.config.json');
+    if (!fs.existsSync(configPath)) {
+      return { resolved: false, reason: 'no-config-file' };
+    }
+
+    const content = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const domain = content.domain;
+    if (!domain) {
+      return { resolved: false, reason: 'no-domain-field' };
+    }
+
+    const domains = config.get('DOMAINS') || [];
+    const match = domains.find(d => d.DOMAIN_NAME === domain);
+    if (!match) {
+      return { resolved: false, reason: 'no-matching-profile', domain };
+    }
+
+    const currentActive = config.get('ACTIVE_DOMAIN');
+    if (currentActive === domain) {
+      return { resolved: true, switched: false, domain };
+    }
+
+    config.set('ACTIVE_DOMAIN', domain);
+    return { resolved: true, switched: true, domain, previous: currentActive };
+  } catch {
+    return { resolved: false, reason: 'error' };
+  }
+}
+
 module.exports = {
   get,
   set,
@@ -235,5 +274,6 @@ module.exports = {
   listDomains,
   removeDomain,
   getActiveDomainConfig,
+  resolveWorkspaceDomain,
   DEFAULT_DOMAIN_CONFIG
 };

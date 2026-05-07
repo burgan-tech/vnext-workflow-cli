@@ -4,34 +4,7 @@ const path = require('path');
 const config = require('../lib/config');
 const { getDomain } = require('../lib/vnextConfig');
 const { processCsxFile, getGitChangedCsx, findAllCsx } = require('../lib/csx');
-
-// Logging helpers
-const LOG = {
-  separator: () => console.log(chalk.cyan('═'.repeat(60))),
-  subSeparator: () => console.log(chalk.cyan('─'.repeat(60))),
-  header: (text) => {
-    console.log();
-    LOG.separator();
-    console.log(chalk.cyan.bold(`  ${text}`));
-    LOG.separator();
-  },
-  success: (text) => console.log(chalk.green(`  ✓ ${text}`)),
-  error: (text) => console.log(chalk.red(`  ✗ ${text}`)),
-  warning: (text) => console.log(chalk.yellow(`  ⚠ ${text}`)),
-  info: (text) => console.log(chalk.dim(`  ○ ${text}`)),
-  component: (type, name, status, detail = '') => {
-    const typeLabel = chalk.cyan(`[${type}]`);
-    const nameLabel = chalk.white(name);
-    if (status === 'success') {
-      console.log(`  ${typeLabel} ${chalk.green('✓')} ${nameLabel} ${chalk.dim(detail)}`);
-    } else if (status === 'error') {
-      console.log(`  ${typeLabel} ${chalk.red('✗')} ${nameLabel}`);
-      if (detail) console.log(chalk.red(`    └─ ${detail}`));
-    } else if (status === 'skip') {
-      console.log(`  ${typeLabel} ${chalk.dim('○')} ${nameLabel} ${chalk.dim(detail)}`);
-    }
-  }
-};
+const { LOG } = require('../lib/ui');
 
 async function csxCommand(options) {
   LOG.header('CSX UPDATE');
@@ -40,9 +13,7 @@ async function csxCommand(options) {
   
   // Check domain
   try {
-    const domain = getDomain(projectRoot);
-    console.log(chalk.dim(`  Domain: ${domain}`));
-    console.log();
+    getDomain(projectRoot);
   } catch (error) {
     LOG.error(`Failed to read vnext.config.json: ${error.message}`);
     return;

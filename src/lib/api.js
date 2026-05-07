@@ -39,30 +39,41 @@ async function publishComponent(baseUrl, componentData) {
       data: response.data
     };
   } catch (error) {
-    // Extract API error details
     let errorMessage = error.message;
-    let errorDetails = null;
-    
+    let apiError = null;
+
     if (error.response) {
       const responseData = error.response.data;
-      
+
       if (typeof responseData === 'string') {
         errorMessage = responseData;
-      } else if (responseData?.error?.message) {
-        errorMessage = responseData.error.message;
-        errorDetails = responseData.error;
-      } else if (responseData?.message) {
-        errorMessage = responseData.message;
-      } else if (responseData) {
-        errorMessage = JSON.stringify(responseData);
+      } else if (responseData && typeof responseData === 'object') {
+        // RFC 7807 Problem Details (detail + status fields)
+        if (responseData.detail) {
+          errorMessage = responseData.detail;
+          apiError = {
+            title: responseData.title,
+            detail: responseData.detail,
+            errors: responseData.errors || null,
+            errorCode: responseData.errorCode || null,
+            traceId: responseData.traceId || null,
+            type: responseData.type || null
+          };
+        } else if (responseData.error?.message) {
+          errorMessage = responseData.error.message;
+        } else if (responseData.message) {
+          errorMessage = responseData.message;
+        } else {
+          errorMessage = JSON.stringify(responseData);
+        }
       }
     }
-    
+
     return {
       success: false,
       error: errorMessage,
-      errorDetails: errorDetails,
-      statusCode: error.response?.status
+      statusCode: error.response?.status,
+      apiError
     };
   }
 }

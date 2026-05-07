@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "bin": {
     "workflow": "./bin/workflow.js",
-    "wf": "./bin/workflow.js"
+    "wf": "./bin/workflow.js",
+    "vnext": "./bin/workflow.js"
   },
   "scripts": {
     "dev": "node bin/workflow.js",

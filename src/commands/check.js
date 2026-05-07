@@ -5,22 +5,7 @@ const { discoverComponents, listDiscovered } = require('../lib/discover');
 const { getDomain, getComponentTypes, getComponentsRoot } = require('../lib/vnextConfig');
 const { testApiConnection } = require('../lib/api');
 const { testDbConnection } = require('../lib/db');
-
-// Logging helpers
-const LOG = {
-  separator: () => console.log(chalk.cyan('═'.repeat(60))),
-  subSeparator: () => console.log(chalk.cyan('─'.repeat(60))),
-  header: (text) => {
-    console.log();
-    LOG.separator();
-    console.log(chalk.cyan.bold(`  ${text}`));
-    LOG.separator();
-  },
-  success: (text) => console.log(chalk.green(`  ✓ ${text}`)),
-  error: (text) => console.log(chalk.red(`  ✗ ${text}`)),
-  warning: (text) => console.log(chalk.yellow(`  ⚠ ${text}`)),
-  info: (text) => console.log(chalk.dim(`  ○ ${text}`))
-};
+const { LOG } = require('../lib/ui');
 
 async function checkCommand() {
   LOG.header('SYSTEM CHECK');

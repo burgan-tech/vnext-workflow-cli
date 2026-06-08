@@ -1,4 +1,8 @@
 const axios = require('axios');
+const pkg = require('../../package.json');
+
+// Identifies requests as coming from the CLI (e.g. "vnext-workflow-cli/1.0.0")
+const USER_AGENT = `vnext-workflow-cli/${pkg.version}`;
 
 /**
  * Tests the API connection
@@ -8,7 +12,8 @@ const axios = require('axios');
 async function testApiConnection(baseUrl) {
   try {
     const response = await axios.get(`${baseUrl}/health`, {
-      timeout: 5000
+      timeout: 5000,
+      headers: { 'User-Agent': USER_AGENT }
     });
     return response.status === 200;
   } catch (error) {
@@ -29,7 +34,8 @@ async function publishComponent(baseUrl, componentData) {
     const response = await axios.post(url, componentData, {
       headers: {
         'accept': '*/*',
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'User-Agent': USER_AGENT
       },
       timeout: 30000
     });
@@ -87,7 +93,7 @@ async function publishComponent(baseUrl, componentData) {
 async function reinitializeSystem(baseUrl, version) {
   const url = `${baseUrl}/api/${version}/definitions/re-initialize`;
   try {
-    await axios.get(url, { timeout: 10000 });
+    await axios.get(url, { timeout: 10000, headers: { 'User-Agent': USER_AGENT } });
     return true;
   } catch (error) {
     return false;

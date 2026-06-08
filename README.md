@@ -6,7 +6,7 @@ Cross-platform modern workflow management tool.
 [![npm downloads](https://img.shields.io/npm/dm/@burgan-tech/vnext-workflow-cli.svg)](https://www.npmjs.com/package/@burgan-tech/vnext-workflow-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A command-line interface (CLI) tool for managing vNext workflows, tasks, schemas, views, functions, and extensions. This tool helps you synchronize your local workflow definitions with the vNext API and database.
+A command-line interface (CLI) tool for managing vNext workflows, tasks, schemas, views, functions, extensions, and mappings. This tool helps you synchronize your local workflow definitions with the vNext API and database.
 
 **Package**: `@burgan-tech/vnext-workflow-cli`  
 **NPM**: https://www.npmjs.com/package/@burgan-tech/vnext-workflow-cli  
@@ -71,7 +71,8 @@ Every vNext project must have a `vnext.config.json` file in the **project root**
     "functions": "Functions",
     "extensions": "Extensions",
     "workflows": "Workflows",
-    "schemas": "Schemas"
+    "schemas": "Schemas",
+    "mappings": "Mappings"
   }
 }
 ```
@@ -88,6 +89,7 @@ Every vNext project must have a `vnext.config.json` file in the **project root**
 | `paths.views` | Views folder name under componentsRoot |
 | `paths.functions` | Functions folder name under componentsRoot |
 | `paths.extensions` | Extensions folder name under componentsRoot |
+| `paths.mappings` | Mappings folder name under componentsRoot |
 
 ### Component Discovery
 
@@ -226,6 +228,7 @@ wf reset  # Select folder from interactive menu
   extensions (Extensions/)
   workflows (Workflows/)
   schemas (Schemas/)
+  mappings (Mappings/)
   ──────────────
   TUMU (All folders)
 ```

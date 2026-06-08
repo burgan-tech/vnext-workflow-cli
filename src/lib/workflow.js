@@ -47,6 +47,7 @@ function detectComponentType(jsonPath, projectRoot) {
           case 'views': return 'sys-views';
           case 'functions': return 'sys-functions';
           case 'extensions': return 'sys-extensions';
+          case 'mappings': return 'sys-mappings';
           default: return `sys-${type.toLowerCase()}`;
         }
       }
@@ -62,7 +63,8 @@ function detectComponentType(jsonPath, projectRoot) {
   if (pathLower.includes('/views/')) return 'sys-views';
   if (pathLower.includes('/functions/')) return 'sys-functions';
   if (pathLower.includes('/extensions/')) return 'sys-extensions';
-  
+  if (pathLower.includes('/mappings/')) return 'sys-mappings';
+
   return 'sys-flows'; // default
 }
 

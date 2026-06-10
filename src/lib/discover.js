@@ -4,6 +4,19 @@ const fs = require('fs');
 const { getComponentsRoot, getComponentTypes } = require('./vnextConfig');
 
 /**
+ * Builds a glob pattern with forward slashes.
+ * glob treats backslashes as escape characters, so on Windows a pattern built
+ * with path.join (which uses "\") breaks "**" recursion and nested files are
+ * never matched. Always feed glob forward-slash separators.
+ * @param {string} dir - Base directory
+ * @param {string} suffix - Glob suffix, e.g. "**\/*.json"
+ * @returns {string} Forward-slash glob pattern
+ */
+function toGlobPattern(dir, suffix) {
+  return path.join(dir, suffix).split(path.sep).join('/');
+}
+
+/**
  * Discovers component folders based on vnext.config.json paths
  * Only scans folders defined in paths, ignores everything else
  * @param {string} projectRoot - Project root folder (PROJECT_ROOT)
@@ -35,8 +48,8 @@ async function discoverComponents(projectRoot) {
  * @returns {Promise<string[]>} JSON file paths
  */
 async function findJsonInComponent(componentDir) {
-  const pattern = path.join(componentDir, '**/*.json');
-  
+  const pattern = toGlobPattern(componentDir, '**/*.json');
+
   const files = await glob(pattern, {
     ignore: [
       '**/.meta/**',
@@ -90,7 +103,7 @@ async function findAllCsxInComponents(projectRoot) {
   // Only scan folders that were discovered from paths
   for (const [type, componentDir] of Object.entries(discovered)) {
     if (componentDir) {
-      const pattern = path.join(componentDir, '**/*.csx');
+      const pattern = toGlobPattern(componentDir, '**/*.csx');
       const files = await glob(pattern, {
         ignore: [
           '**/.meta/**',
@@ -157,6 +170,7 @@ function detectComponentTypeFromPath(filePath, componentTypes) {
 }
 
 module.exports = {
+  toGlobPattern,
   discoverComponents,
   findJsonInComponent,
   findAllJsonFiles,

@@ -93,7 +93,8 @@ function getCsxLocation(csxPath, projectRoot) {
 /**
  * Updates ALL CSX codes in a JSON file
  * Updates all references with the same location
- * Supports encoding types: NAT (native/plain text), B64 (Base64, default)
+ * Encoding handling: absent/B64 -> Base64 (default), NAT -> native source as
+ * an escaped JSON string, any other value (e.g. REF) -> left untouched
  * @param {string} jsonPath - JSON file path
  * @param {string} csxLocation - CSX location path
  * @param {string} base64Code - Base64 encoded CSX content
@@ -122,17 +123,22 @@ async function updateCodeInJson(jsonPath, csxLocation, base64Code, nativeCode) {
     }
     
     if (obj.location === csxLocation && 'code' in obj) {
-      // Check encoding type: NAT = Native (plain text), B64 or empty = Base64 (default)
+      // Encoding decides how the CSX content is embedded:
+      //   absent / B64 -> Base64 (default)
+      //   NAT          -> JSON-stringified native source
+      //   anything else (e.g. REF) -> leave untouched
       const encoding = obj.encoding ? obj.encoding.toUpperCase() : 'B64';
-      
-      if (encoding === 'NAT') {
-        // Native encoding - write plain text content
-        obj.code = nativeCode;
-      } else {
-        // B64 or default - write Base64 encoded content
+
+      if (encoding === 'B64') {
         obj.code = base64Code;
+        updateCount++;
+      } else if (encoding === 'NAT') {
+        // Native source as-is; JSON.stringify of the whole document escapes
+        // newlines/quotes so the stored value becomes a normal JSON string.
+        obj.code = nativeCode;
+        updateCount++;
       }
-      updateCount++;
+      // Other encodings (e.g. REF) are intentionally skipped — no modification.
     }
     
     // Scan all elements in array or object

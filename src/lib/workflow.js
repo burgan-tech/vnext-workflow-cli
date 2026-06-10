@@ -4,7 +4,7 @@ const { glob } = require('glob');
 const { publishComponent } = require('./api');
 const { getInstanceId, deleteWorkflow } = require('./db');
 const { getComponentTypes } = require('./vnextConfig');
-const { discoverComponents, findJsonInComponent } = require('./discover');
+const { discoverComponents, findJsonInComponent, toGlobPattern } = require('./discover');
 
 /**
  * Gets key and version values from JSON file
@@ -167,7 +167,7 @@ async function getGitChangedJson(projectRoot) {
  * @returns {Promise<string[]>} JSON file paths
  */
 async function findAllJsonInComponent(componentDir) {
-  const pattern = path.join(componentDir, '**/*.json');
+  const pattern = toGlobPattern(componentDir, '**/*.json');
   const files = await glob(pattern, {
     ignore: [
       '**/.meta/**',

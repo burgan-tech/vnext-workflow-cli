@@ -4,7 +4,7 @@ const inquirer = require('inquirer');
 const path = require('path');
 const { glob } = require('glob');
 const config = require('../lib/config');
-const { discoverComponents } = require('../lib/discover');
+const { discoverComponents, toGlobPattern } = require('../lib/discover');
 const { getDomain, getComponentTypes } = require('../lib/vnextConfig');
 const { getJsonMetadata, findAllJson, detectComponentType } = require('../lib/workflow');
 const { publishComponent, reinitializeSystem } = require('../lib/api');
@@ -93,7 +93,7 @@ async function resetCommand(options) {
     }
     
     // Find JSONs in this folder only
-    const pattern = path.join(dir, '**/*.json');
+    const pattern = toGlobPattern(dir, '**/*.json');
     const files = await glob(pattern, {
       ignore: [
         '**/.meta/**',

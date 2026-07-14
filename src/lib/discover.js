@@ -151,6 +151,86 @@ function listDiscovered(discovered, componentTypes) {
 }
 
 /**
+ * Resolves a folder name to a list of directories to update.
+ *
+ * Two resolution modes (in order):
+ *   a) Exact path: if `name` resolves to an existing directory (absolute, or
+ *      relative to projectRoot, or relative to componentsRoot), that single
+ *      directory is returned.
+ *   b) Feature name: otherwise, `name` is treated as a feature folder name and
+ *      matched against every discovered component-type root. Every
+ *      `<componentRoot>/<name>` that exists as a directory is collected, so a
+ *      feature spread across Workflows/, Views/, Schemas/, … is gathered.
+ *
+ * @param {string} projectRoot - Project root folder
+ * @param {string} name - Folder name or relative/absolute path
+ * @returns {Promise<string[]>} Absolute directory paths (empty if nothing matched)
+ */
+async function resolveFeatureFolders(projectRoot, name) {
+  const isDir = (p) => fs.existsSync(p) && fs.statSync(p).isDirectory();
+
+  // a) Exact-path resolution
+  const candidates = [];
+  if (path.isAbsolute(name)) {
+    candidates.push(name);
+  } else {
+    candidates.push(path.join(projectRoot, name));
+    try {
+      candidates.push(path.join(getComponentsRoot(projectRoot), name));
+    } catch (error) {
+      // componentsRoot may be unavailable; ignore and fall through
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (isDir(candidate)) {
+      return [path.resolve(candidate)];
+    }
+  }
+
+  // b) Feature-name match across discovered component roots
+  const discovered = await discoverComponents(projectRoot);
+  const dirs = [];
+  for (const componentDir of Object.values(discovered)) {
+    const featureDir = path.join(componentDir, name);
+    if (isDir(featureDir)) {
+      dirs.push(path.resolve(featureDir));
+    }
+  }
+
+  return dirs;
+}
+
+/**
+ * Lists available feature folder names — the union of immediate subdirectory
+ * names across all discovered component-type roots. Used for error messages
+ * when a requested folder name does not match anything.
+ *
+ * @param {string} projectRoot - Project root folder
+ * @returns {Promise<string[]>} Sorted unique feature folder names
+ */
+async function listFeatureFolders(projectRoot) {
+  const discovered = await discoverComponents(projectRoot);
+  const names = new Set();
+
+  for (const componentDir of Object.values(discovered)) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(componentDir, { withFileTypes: true });
+    } catch (error) {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.name.startsWith('.')) {
+        names.add(entry.name);
+      }
+    }
+  }
+
+  return Array.from(names).sort();
+}
+
+/**
  * Detects component type from file path
  * @param {string} filePath - File path
  * @param {Object} componentTypes - Component type -> folder name mapping
@@ -177,5 +257,7 @@ module.exports = {
   findAllCsxInComponents,
   getComponentDir,
   listDiscovered,
+  resolveFeatureFolders,
+  listFeatureFolders,
   detectComponentTypeFromPath
 };

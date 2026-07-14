@@ -1,8 +1,14 @@
 const axios = require('axios');
-const pkg = require('../../package.json');
+const https = require('node:https');
+const http = require('node:http');
 
-// Identifies requests as coming from the CLI (e.g. "vnext-workflow-cli/1.0.0")
-const USER_AGENT = `vnext-workflow-cli/${pkg.version}`;
+// Create axios instance with custom agents for both HTTP and HTTPS
+const apiClient = axios.create({
+  httpAgent: new http.Agent({ keepAlive: true }),
+  httpsAgent: new https.Agent({ 
+    rejectUnauthorized: false // Allow self-signed certificates
+  })
+});
 
 /**
  * Tests the API connection
@@ -11,7 +17,7 @@ const USER_AGENT = `vnext-workflow-cli/${pkg.version}`;
  */
 async function testApiConnection(baseUrl) {
   try {
-    const response = await axios.get(`${baseUrl}/health`, {
+    const response = await apiClient.get(`${baseUrl}/health`, {
       timeout: 5000,
       headers: { 'User-Agent': USER_AGENT }
     });
@@ -31,11 +37,10 @@ async function publishComponent(baseUrl, componentData) {
   const url = `${baseUrl}/api/v1/definitions/publish`;
   
   try {
-    const response = await axios.post(url, componentData, {
+    const response = await apiClient.post(url, componentData, {
       headers: {
         'accept': '*/*',
-        'Content-Type': 'application/json',
-        'User-Agent': USER_AGENT
+        'Content-Type': 'application/json'
       },
       timeout: 30000
     });
@@ -93,7 +98,7 @@ async function publishComponent(baseUrl, componentData) {
 async function reinitializeSystem(baseUrl, version) {
   const url = `${baseUrl}/api/${version}/definitions/re-initialize`;
   try {
-    await axios.get(url, { timeout: 10000, headers: { 'User-Agent': USER_AGENT } });
+    await apiClient.get(url, { timeout: 10000 });
     return true;
   } catch (error) {
     return false;

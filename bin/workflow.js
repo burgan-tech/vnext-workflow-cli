@@ -54,6 +54,17 @@ program
   .description('Update workflows')
   .option('-a, --all', 'Update all workflows')
   .option('-f, --file <path>', 'Update a specific workflow')
+  .option('-d, --folder <name>', 'Update all components under a feature folder (across all component types), ignoring git')
+  .addHelpText('after', `
+Examples:
+  wf update                          Update git-changed components (default)
+  wf update --all                    Update all components
+  wf update --file Views/x.json      Update a single component file
+  wf update --folder person          Update every component under the "person" feature (Tasks/person, Workflows/person, Views/person, ...)
+  wf update -d Workflows/person       Update only the components in that exact folder
+
+Note: --file takes precedence over --folder, which takes precedence over --all.
+`)
   .action(updateCommand);
 
 // Sync command

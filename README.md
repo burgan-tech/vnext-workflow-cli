@@ -194,9 +194,21 @@ wf sync
 **Use when**: You modified existing components and want to update them
 
 ```bash
-wf update                # Process changed files in Git (CSX + JSON)
-wf update --all          # Update all (asks for confirmation)
-wf update --file x.json  # Process a single file
+wf update                  # Process changed files in Git (CSX + JSON)
+wf update --all            # Update all (asks for confirmation)
+wf update --file x.json    # Process a single file
+wf update --folder person  # Process every component under a feature folder, ignoring Git
+```
+
+**`--folder <name>` (`-d`)**: Updates every component belonging to a feature, across all component types, regardless of Git status. It resolves `<name>` in two ways:
+- **Feature name** (e.g. `person`): matches `<name>` under every component-type root (`Workflows/person`, `Tasks/person`, `Views/person`, `Schemas/person`, …) and updates all of them together.
+- **Exact path** (e.g. `Workflows/person` or an absolute path): updates only that specific folder.
+
+If nothing matches, the command lists the feature folder names it did find so you can correct a typo. `--file` takes precedence over `--folder`, which takes precedence over `--all`.
+
+```bash
+wf update --folder person          # Every "person" folder across all component types
+wf update -d Workflows/person      # Only Workflows/person
 ```
 
 ---
@@ -424,6 +436,15 @@ wf reset
 wf csx
 ```
 
+### 5b. Update a Whole Feature Folder (No Git Needed)
+```bash
+# Update every "person" component across Workflows/, Tasks/, Views/, Schemas/, ...
+wf update --folder person
+
+# Or target one exact folder
+wf update --folder Workflows/person
+```
+
 ### 6. Multidomain Workflow
 ```bash
 # Add domains (one-time setup)
@@ -454,6 +475,7 @@ wf domain list
 |---------|----------|-----------------|------------|----------|
 | `sync` | Yes | Skip | Publish | Add missing components |
 | `update` | Yes | Delete + Publish | Publish | Update changed components |
+| `update --folder <name>` | Yes | Delete + Publish | Publish | Update every component in a feature folder (ignores Git) |
 | `reset` | Yes | Delete + Publish | Publish | Force reset components |
 | `csx` | No | N/A | N/A | Only update CSX in JSONs |
 

@@ -2,8 +2,9 @@ const chalk = require('chalk');
 const ora = require('ora');
 const path = require('path');
 const inquirer = require('inquirer');
+const { glob } = require('glob');
 const config = require('../lib/config');
-const { discoverComponents, findAllJsonFiles } = require('../lib/discover');
+const { discoverComponents, findAllJsonFiles, resolveFeatureFolders, listFeatureFolders, toGlobPattern } = require('../lib/discover');
 const { getDomain, getComponentTypes } = require('../lib/vnextConfig');
 const { publishComponent, reinitializeSystem } = require('../lib/api');
 const { getInstanceId, deleteWorkflow } = require('../lib/db');
@@ -44,12 +45,57 @@ async function updateCommand(options) {
     version: config.get('API_VERSION'),
     domain: domain
   };
-  
+
+  // Folder mode: resolve the feature folder name to a set of directories.
+  // --file wins over --folder if both are given (most specific).
+  const ignorePatterns = [
+    '**/.meta/**',
+    '**/.meta',
+    '**/*.diagram.json',
+    '**/package*.json',
+    '**/*config*.json'
+  ];
+  let folderDirs = [];
+  const useFolder = !!options.folder && !options.file;
+
+  if (useFolder) {
+    folderDirs = await resolveFeatureFolders(projectRoot, options.folder);
+
+    if (folderDirs.length === 0) {
+      LOG.error(`No folder matched "${options.folder}"`);
+      const available = await listFeatureFolders(projectRoot);
+      if (available.length > 0) {
+        console.log(chalk.dim(`\n  Available folders: ${available.join(', ')}\n`));
+      }
+      return;
+    }
+
+    console.log(chalk.blue(`\n  Folder: ${options.folder} → ${folderDirs.length} folder(s)\n`));
+  }
+
   // FIRST: Update changed CSX files
   let csxFiles = [];
   const csxResults = { success: 0, failed: 0, errors: [] };
-  
-  if (options.all) {
+
+  if (useFolder) {
+    // Find CSX files within the matched feature folders
+    const csxSpinner = ora('Finding CSX files in folder...').start();
+    try {
+      for (const dir of folderDirs) {
+        const found = await glob(toGlobPattern(dir, '**/*.csx'), {
+          ignore: ['**/.meta/**', '**/.meta', '**/node_modules/**', '**/dist/**']
+        });
+        csxFiles.push(...found);
+      }
+      if (csxFiles.length > 0) {
+        csxSpinner.succeed(chalk.green(`${csxFiles.length} CSX files found`));
+      } else {
+        csxSpinner.info(chalk.dim('No CSX files in folder'));
+      }
+    } catch (error) {
+      csxSpinner.warn(chalk.yellow(`CSX scan error: ${error.message}`));
+    }
+  } else if (options.all) {
     // Find all CSX files
     const csxSpinner = ora('Finding all CSX files...').start();
     try {
@@ -108,6 +154,26 @@ async function updateCommand(options) {
       : path.join(projectRoot, options.file);
     jsonFiles = [{ path: filePath, type: detectComponentType(filePath, projectRoot), fileName: path.basename(filePath) }];
     console.log(chalk.blue(`\n  File: ${path.basename(filePath)}\n`));
+  } else if (useFolder) {
+    // All JSON files within the matched feature folders (git-independent)
+    const spinner = ora('Finding JSON files in folder...').start();
+
+    for (const dir of folderDirs) {
+      const files = await glob(toGlobPattern(dir, '**/*.json'), { ignore: ignorePatterns });
+      jsonFiles.push(...files.map(f => ({
+        path: f,
+        type: detectComponentType(f, projectRoot),
+        fileName: path.basename(f)
+      })));
+    }
+
+    if (jsonFiles.length === 0) {
+      spinner.info(chalk.yellow('No JSON files in folder'));
+      console.log();
+      return;
+    }
+
+    spinner.succeed(chalk.green(`${jsonFiles.length} JSON files found`));
   } else if (options.all) {
     // All JSON files
     LOG.warning('ALL components will be updated!');

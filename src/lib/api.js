@@ -1,13 +1,18 @@
 const axios = require('axios');
 const https = require('node:https');
 const http = require('node:http');
+const pkg = require('../../package.json');
+
+// Identifies requests as coming from the CLI (e.g. "vnext-workflow-cli/1.0.0")
+const USER_AGENT = `vnext-workflow-cli/${pkg.version}`;
 
 // Create axios instance with custom agents for both HTTP and HTTPS
 const apiClient = axios.create({
   httpAgent: new http.Agent({ keepAlive: true }),
-  httpsAgent: new https.Agent({ 
+  httpsAgent: new https.Agent({
     rejectUnauthorized: false // Allow self-signed certificates
-  })
+  }),
+  headers: { 'User-Agent': USER_AGENT }
 });
 
 /**
@@ -18,8 +23,7 @@ const apiClient = axios.create({
 async function testApiConnection(baseUrl) {
   try {
     const response = await apiClient.get(`${baseUrl}/health`, {
-      timeout: 5000,
-      headers: { 'User-Agent': USER_AGENT }
+      timeout: 5000
     });
     return response.status === 200;
   } catch (error) {

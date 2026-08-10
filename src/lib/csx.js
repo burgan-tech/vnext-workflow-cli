@@ -122,8 +122,9 @@ async function updateCodeInJson(jsonPath, csxLocation, base64Code, nativeCode) {
       return;
     }
     
-    if (obj.location === csxLocation && 'code' in obj) {
-      // Encoding decides how the CSX content is embedded:
+    if (obj.location === csxLocation) {
+      // A reference may carry only `location` — the `code` key is then created
+      // here. Encoding decides how the CSX content is embedded:
       //   absent / B64 -> Base64 (default)
       //   NAT          -> JSON-stringified native source
       //   anything else (e.g. REF) -> leave untouched

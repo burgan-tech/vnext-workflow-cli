@@ -1,82 +1,77 @@
 const chalk = require('chalk');
 const ora = require('ora');
-const config = require('../lib/config');
+const { buildDbConfig } = require('../lib/config');
 const { discoverComponents, listDiscovered } = require('../lib/discover');
-const { getDomain, getComponentTypes, getComponentsRoot } = require('../lib/vnextConfig');
+const { runForEachSolution } = require('../lib/solutions');
 const { testApiConnection } = require('../lib/api');
 const { testDbConnection } = require('../lib/db');
 const { LOG } = require('../lib/ui');
 
-async function checkCommand() {
+async function checkCommand(options) {
   LOG.header('SYSTEM CHECK');
-  
-  const projectRoot = config.get('PROJECT_ROOT');
-  const autoDiscover = config.get('AUTO_DISCOVER');
-  
-  // vnext.config.json check
+
+  // Profiles are not required: a missing profile is exactly what check should report.
+  const outcomes = await runForEachSolution(options, { requireProfile: false }, checkSolution);
+  if (!outcomes) return;
+
+  LOG.separator();
+  console.log(chalk.green.bold('\n  ✓ Check completed\n'));
+}
+
+async function checkSolution(solution) {
+  const profile = solution.profile;
+
+  // Solution file
   console.log(chalk.white.bold('\n  Configuration:\n'));
-  
-  let domain, componentTypes, componentsRoot;
-  try {
-    domain = getDomain(projectRoot);
-    componentTypes = getComponentTypes(projectRoot);
-    componentsRoot = getComponentsRoot(projectRoot);
-    
-    LOG.success(`vnext.config.json found`);
-    console.log(chalk.dim(`    Domain: ${domain}`));
-    console.log(chalk.dim(`    Components Root: ${componentsRoot}`));
-  } catch (error) {
-    LOG.error(`vnext.config.json: ${error.message}`);
-    componentTypes = {};
-  }
-  
-  // API check
+  LOG.success(`${solution.fileName} found`);
+  console.log(chalk.dim(`    Domain: ${solution.domain}`));
+  console.log(chalk.dim(`    Components Root: ${solution.componentsRoot}`));
+
+  // Connection checks (need a CLI profile)
   console.log(chalk.white.bold('\n  Connection Status:\n'));
-  
-  let apiSpinner = ora('  Checking API...').start();
-  try {
-    const apiUrl = config.get('API_BASE_URL');
-    const isApiOk = await testApiConnection(apiUrl);
-    if (isApiOk) {
-      apiSpinner.succeed(chalk.green(`  API: Accessible (${apiUrl})`));
-    } else {
-      apiSpinner.fail(chalk.red(`  API: Not accessible (${apiUrl})`));
+
+  if (!profile) {
+    LOG.warning(`No CLI domain profile for "${solution.domain}" — API/DB checks skipped`);
+    console.log(chalk.dim(`    Run: wf domain add ${solution.domain} --API_BASE_URL <url> --DB_NAME <db>`));
+  } else {
+    let apiSpinner = ora('  Checking API...').start();
+    try {
+      const apiUrl = profile.API_BASE_URL;
+      const isApiOk = await testApiConnection(apiUrl);
+      if (isApiOk) {
+        apiSpinner.succeed(chalk.green(`  API: Accessible (${apiUrl})`));
+      } else {
+        apiSpinner.fail(chalk.red(`  API: Not accessible (${apiUrl})`));
+      }
+    } catch (error) {
+      apiSpinner.fail(chalk.red(`  API: Error - ${error.message}`));
     }
-  } catch (error) {
-    apiSpinner.fail(chalk.red(`  API: Error - ${error.message}`));
-  }
-  
-  // DB check
-  let dbSpinner = ora('  Checking database...').start();
-  try {
-    const useDockerValue = config.get('USE_DOCKER');
-    const isDbOk = await testDbConnection({
-      host: config.get('DB_HOST'),
-      port: config.get('DB_PORT'),
-      database: config.get('DB_NAME'),
-      user: config.get('DB_USER'),
-      password: config.get('DB_PASSWORD'),
-      useDocker: useDockerValue === true || useDockerValue === 'true',
-      dockerContainer: config.get('DOCKER_POSTGRES_CONTAINER')
-    });
-    if (isDbOk) {
-      dbSpinner.succeed(chalk.green(`  DB: Connected (${config.get('DB_HOST')}:${config.get('DB_PORT')})`));
-    } else {
-      dbSpinner.fail(chalk.red('  DB: Cannot connect'));
+
+    let dbSpinner = ora('  Checking database...').start();
+    try {
+      const isDbOk = await testDbConnection(buildDbConfig(profile));
+      if (isDbOk) {
+        dbSpinner.succeed(chalk.green(`  DB: Connected (${profile.DB_HOST}:${profile.DB_PORT})`));
+      } else {
+        dbSpinner.fail(chalk.red('  DB: Cannot connect'));
+      }
+    } catch (error) {
+      dbSpinner.fail(chalk.red(`  DB: Error - ${error.message}`));
     }
-  } catch (error) {
-    dbSpinner.fail(chalk.red(`  DB: Error - ${error.message}`));
   }
-  
+
   // Folder scan
+  const autoDiscover = profile ? profile.AUTO_DISCOVER : true;
+  const componentTypes = solution.componentTypes;
+
   if (autoDiscover && Object.keys(componentTypes).length > 0) {
     console.log(chalk.white.bold('\n  Component Folders:\n'));
-    
+
     let discoverSpinner = ora('  Scanning folders...').start();
     try {
-      const discovered = await discoverComponents(projectRoot);
+      const discovered = await discoverComponents(solution);
       discoverSpinner.stop();
-      
+
       const list = listDiscovered(discovered, componentTypes);
       for (const item of list) {
         if (item.found) {
@@ -91,9 +86,8 @@ async function checkCommand() {
   } else if (!autoDiscover) {
     console.log(chalk.yellow('\n  ⚠ AUTO_DISCOVER is disabled'));
   }
-  
-  LOG.separator();
-  console.log(chalk.green.bold('\n  ✓ Check completed\n'));
+
+  console.log();
 }
 
 module.exports = checkCommand;

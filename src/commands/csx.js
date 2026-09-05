@@ -1,39 +1,37 @@
 const chalk = require('chalk');
 const ora = require('ora');
 const path = require('path');
-const config = require('../lib/config');
-const { getDomain } = require('../lib/vnextConfig');
+const { runForEachSolution } = require('../lib/solutions');
 const { processCsxFile, getGitChangedCsx, findAllCsx } = require('../lib/csx');
 const { LOG } = require('../lib/ui');
 
 async function csxCommand(options) {
   LOG.header('CSX UPDATE');
-  
-  const projectRoot = config.get('PROJECT_ROOT');
-  
-  // Check domain
-  try {
-    getDomain(projectRoot);
-  } catch (error) {
-    LOG.error(`Failed to read vnext.config.json: ${error.message}`);
-    return;
-  }
-  
+
+  // csx touches only local files, so no CLI domain profile is needed.
+  await runForEachSolution(
+    options,
+    { requireProfile: false, forFile: options.file },
+    (solution) => csxSolution(solution, options)
+  );
+}
+
+async function csxSolution(solution, options) {
   let csxFiles = [];
-  
+
   // Which CSX files to process?
   if (options.file) {
     // Specific file
-    const filePath = path.isAbsolute(options.file) 
-      ? options.file 
-      : path.join(projectRoot, options.file);
+    const filePath = path.isAbsolute(options.file)
+      ? options.file
+      : path.join(solution.projectRoot, options.file);
     csxFiles = [filePath];
     console.log(chalk.blue(`  File: ${path.basename(filePath)}\n`));
   } else if (options.all) {
     // All CSX files
     const spinner = ora('  Finding all CSX files...').start();
     try {
-      csxFiles = await findAllCsx(projectRoot);
+      csxFiles = await findAllCsx(solution);
       spinner.succeed(chalk.green(`  ${csxFiles.length} CSX files found`));
     } catch (error) {
       spinner.fail(chalk.red(`  CSX scan error: ${error.message}`));
@@ -43,33 +41,33 @@ async function csxCommand(options) {
     // Changed files in Git (default)
     const spinner = ora('  Finding changed CSX files in Git...').start();
     try {
-      csxFiles = await getGitChangedCsx(projectRoot);
-      
+      csxFiles = await getGitChangedCsx(solution);
+
       if (csxFiles.length === 0) {
         spinner.info(chalk.yellow('  No changed CSX files in Git'));
         console.log(chalk.green('\n  ✓ All CSX files up to date\n'));
         return;
       }
-      
+
       spinner.succeed(chalk.green(`  ${csxFiles.length} changed CSX files found`));
     } catch (error) {
       spinner.fail(chalk.red(`  CSX scan error: ${error.message}`));
       return;
     }
   }
-  
+
   // Process each CSX file
   const results = { success: 0, failed: 0, errors: [] };
   const updatedFiles = [];
-  
+
   console.log(chalk.blue('\n  Writing CSX files to JSONs...\n'));
-  
+
   for (const csxFile of csxFiles) {
     const fileName = path.basename(csxFile);
-    
+
     try {
-      const result = await processCsxFile(csxFile, projectRoot);
-      
+      const result = await processCsxFile(csxFile, solution);
+
       if (result.success) {
         LOG.component('CSX', fileName, 'success', `→ ${result.updatedJsonCount} JSON, ${result.totalUpdates} refs`);
         results.success++;
@@ -85,26 +83,26 @@ async function csxCommand(options) {
     } catch (error) {
       LOG.component('CSX', fileName, 'error', error.message);
       results.failed++;
-      results.errors.push({ file: fileName, error: error.message });
+      results.errors.push({ type: 'CSX', file: fileName, error: error.message });
     }
   }
-  
+
   // SUMMARY REPORT
   LOG.header('CSX UPDATE SUMMARY');
-  
+
   // Results
   console.log(chalk.white.bold('\n  Results:\n'));
-  
+
   const successLabel = results.success > 0 ? chalk.green(`${results.success} success`) : chalk.dim('0 success');
   const failedLabel = results.failed > 0 ? chalk.red(`, ${results.failed} failed`) : '';
   console.log(`  ${chalk.cyan('CSX Files'.padEnd(16))} : ${successLabel}${failedLabel}`);
-  
+
   // Updated JSON details
   if (updatedFiles.length > 0) {
     console.log();
     LOG.subSeparator();
     console.log(chalk.white.bold('\n  Updated JSON Files:\n'));
-    
+
     for (const item of updatedFiles) {
       console.log(chalk.green(`  ${item.file}:`));
       for (const json of item.jsonFiles) {
@@ -112,26 +110,28 @@ async function csxCommand(options) {
       }
     }
   }
-  
+
   // Errors
   if (results.errors.length > 0) {
     console.log();
     LOG.subSeparator();
     console.log(chalk.red.bold('\n  ERRORS:\n'));
-    
+
     for (const err of results.errors) {
       console.log(chalk.red(`  [CSX] ${err.file}`));
       console.log(chalk.dim(`    └─ ${err.error}`));
     }
   }
-  
+
   LOG.separator();
-  
+
   if (results.success > 0 && results.failed === 0) {
     console.log(chalk.green.bold('\n  ✓ CSX update completed\n'));
   } else if (results.failed > 0) {
     console.log(chalk.yellow.bold(`\n  ⚠ CSX update completed (${results.failed} errors)\n`));
   }
+
+  return results;
 }
 
 module.exports = csxCommand;

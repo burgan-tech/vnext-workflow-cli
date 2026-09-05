@@ -1,6 +1,4 @@
 const Conf = require('conf');
-const fs = require('fs');
-const path = require('path');
 
 // Default config values for a domain
 const DEFAULT_DOMAIN_CONFIG = {
@@ -75,6 +73,49 @@ function getActiveDomainConfig() {
     throw new Error(`Active domain "${activeDomain}" not found in config.`);
   }
   return domain;
+}
+
+/**
+ * Returns the config profile of a specific domain, merged over the defaults
+ * so that profiles persisted before a key existed still carry every key.
+ * Does NOT touch ACTIVE_DOMAIN.
+ * @param {string} name - Domain name (DOMAIN_NAME)
+ * @returns {Object|null} Domain profile, or null if no such profile exists
+ */
+function getDomainConfig(name) {
+  const domains = config.get('DOMAINS') || [];
+  const domain = domains.find(d => d.DOMAIN_NAME === name);
+  return domain ? { ...DEFAULT_DOMAIN_CONFIG, ...domain } : null;
+}
+
+/**
+ * Builds the dbConfig object expected by lib/db.js from a domain profile.
+ * @param {Object} profile - Domain profile (see getDomainConfig)
+ * @returns {Object} dbConfig
+ */
+function buildDbConfig(profile) {
+  const useDockerValue = profile.USE_DOCKER;
+  return {
+    host: profile.DB_HOST,
+    port: profile.DB_PORT,
+    database: profile.DB_NAME,
+    user: profile.DB_USER,
+    password: profile.DB_PASSWORD,
+    useDocker: useDockerValue === true || useDockerValue === 'true',
+    dockerContainer: profile.DOCKER_POSTGRES_CONTAINER
+  };
+}
+
+/**
+ * Builds the apiConfig object used by the commands from a domain profile.
+ * @param {Object} profile - Domain profile (see getDomainConfig)
+ * @returns {Object} { baseUrl, version }
+ */
+function buildApiConfig(profile) {
+  return {
+    baseUrl: profile.API_BASE_URL,
+    version: profile.API_VERSION
+  };
 }
 
 /**
@@ -226,43 +267,6 @@ function removeDomain(name) {
   }
 }
 
-/**
- * Resolves the active domain from vnext.config.json in the given project root.
- * If a matching CLI domain profile exists, silently switches to it.
- * @param {string} projectRoot - Project root folder (typically cwd)
- * @returns {Object} Resolution result with { resolved, switched, domain, previous, reason }
- */
-function resolveWorkspaceDomain(projectRoot) {
-  try {
-    const configPath = path.join(projectRoot, 'vnext.config.json');
-    if (!fs.existsSync(configPath)) {
-      return { resolved: false, reason: 'no-config-file' };
-    }
-
-    const content = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    const domain = content.domain;
-    if (!domain) {
-      return { resolved: false, reason: 'no-domain-field' };
-    }
-
-    const domains = config.get('DOMAINS') || [];
-    const match = domains.find(d => d.DOMAIN_NAME === domain);
-    if (!match) {
-      return { resolved: false, reason: 'no-matching-profile', domain };
-    }
-
-    const currentActive = config.get('ACTIVE_DOMAIN');
-    if (currentActive === domain) {
-      return { resolved: true, switched: false, domain };
-    }
-
-    config.set('ACTIVE_DOMAIN', domain);
-    return { resolved: true, switched: true, domain, previous: currentActive };
-  } catch {
-    return { resolved: false, reason: 'error' };
-  }
-}
-
 module.exports = {
   get,
   set,
@@ -274,6 +278,8 @@ module.exports = {
   listDomains,
   removeDomain,
   getActiveDomainConfig,
-  resolveWorkspaceDomain,
+  getDomainConfig,
+  buildDbConfig,
+  buildApiConfig,
   DEFAULT_DOMAIN_CONFIG
 };

@@ -1,12 +1,7 @@
 #!/usr/bin/env node
 
 const { program, Argument } = require('commander');
-const chalk = require('chalk');
 const pkg = require('../package.json');
-
-// Config
-const config = require('../src/lib/config');
-const { printActiveDomainBanner } = require('../src/lib/ui');
 
 // Commands
 const checkCommand = require('../src/commands/check');
@@ -20,18 +15,25 @@ const domainCommand = require('../src/commands/domain');
 program
   .name('workflow')
   .description('vNext Workflow Manager CLI')
-  .version(pkg.version);
+  .version(pkg.version)
+  .option('--domain <name>', 'Only process the solution whose domain is <name> (default: every vnext*.config.json in the workspace)')
+  .addHelpText('after', `
+Multi-solution workspaces:
+  A workspace may hold several solution files side by side:
+    vnext.config.json              (default)
+    vnext.<domain>.config.json     (one per additional domain)
+  Each declares its own "domain" and "paths.componentsRoot". Workspace commands
+  (check, csx, sync, update, reset) run once per solution, sequentially, using
+  the CLI domain profile that matches the solution's domain (see "wf domain").
+  Pass --domain <name> to work on a single solution.
+`);
 
-// Auto-resolve domain and show banner before each command
+// Forward the global --domain option to the subcommand so every handler sees options.domain.
 program.hook('preAction', (thisCommand, actionCommand) => {
-  if (actionCommand.name() === 'domain') return;
-
-  const result = config.resolveWorkspaceDomain(process.cwd());
-  if (result.resolved && result.switched) {
-    console.log(chalk.dim(`  [auto] Domain switched to "${result.domain}" (from vnext.config.json)`));
+  const { domain } = thisCommand.opts();
+  if (domain) {
+    actionCommand.setOptionValue('domain', domain);
   }
-
-  printActiveDomainBanner();
 });
 
 // Check command
@@ -62,6 +64,7 @@ Examples:
   wf update --file Views/x.json      Update a single component file
   wf update --folder person          Update every component under the "person" feature (Tasks/person, Workflows/person, Views/person, ...)
   wf update -d Workflows/person       Update only the components in that exact folder
+  wf update --domain partner --all   Update all components of the "partner" solution only
 
 Note: --file takes precedence over --folder, which takes precedence over --all.
 `)

@@ -56,7 +56,7 @@ npm link
 
 ## 📄 vnext.config.json (Required)
 
-Every vNext project must have a `vnext.config.json` file in the **project root**. This file defines the domain and component paths.
+Every vNext workspace must have at least one **solution file** in the **project root**. The default solution file is `vnext.config.json`; a workspace that hosts several domains adds one `vnext.{domain}.config.json` per extra domain (see [Multiple solutions in one workspace](#multiple-solutions-in-one-workspace)). A solution file defines the domain and component paths.
 
 ### Example Configuration
 
@@ -81,7 +81,7 @@ Every vNext project must have a `vnext.config.json` file in the **project root**
 
 | Property | Description |
 |----------|-------------|
-| `domain` | Domain name used for API calls (replaces config's API_DOMAIN) |
+| `domain` | Domain name of this solution. Must match a CLI domain profile (`wf domain add <name>`) and the `domain` field of every component under this solution |
 | `paths.componentsRoot` | Root folder where all components are located |
 | `paths.tasks` | Tasks folder name under componentsRoot |
 | `paths.workflows` | Workflows folder name under componentsRoot |
@@ -98,6 +98,32 @@ The CLI scans `componentsRoot` recursively and:
 - Ignores `.meta` folders
 - Ignores `*.diagram.json` files
 - Ignores `package*.json` and `*config*.json` files
+
+### Multiple solutions in one workspace
+
+A single workspace can hold several domains side by side. Each domain gets its own solution file in the project root and its own `componentsRoot`:
+
+```
+my-workspace/
+├── vnext.config.json            # domain "core"     → componentsRoot "core"
+├── vnext.partner.config.json    # domain "partner"  → componentsRoot "partner"
+├── core/
+│   ├── Workflows/ …
+│   └── Tasks/ …
+└── partner/
+    ├── Workflows/ …
+    └── Views/ …
+```
+
+Rules:
+
+- **File name:** `vnext.config.json` (default) or `vnext.{domain}.config.json`. The `{domain}` part is only used to find the file; the **`domain` field inside the file is authoritative**. If the two differ, a warning is printed and the field wins.
+- **Separate folders:** every solution points at its own `paths.componentsRoot`. Discovery, `--file`, `--folder` and Git-changed detection are all scoped to that folder.
+- **Profiles:** each solution's `domain` is looked up in the CLI domain profiles (`wf domain list`). A solution with no matching profile is **skipped with a warning** by `check`/`sync`/`update`/`reset` (`csx` needs no profile and always runs).
+- **Component domain check:** every component JSON must carry a `domain` equal to its solution's `domain`. A missing or different value fails that component with `DOMAIN_MISMATCH`; the rest of the batch continues.
+- **Sequential processing:** with no `--domain` option, every workspace command runs once per solution, in order, each under its own banner, followed by a `WORKSPACE SUMMARY` and a combined error table with a `Domain` column.
+- **`--domain <name>`:** global option that restricts any command to one solution. Works before or after the command name (`wf update --domain partner`, `wf --domain partner update`).
+- **Duplicate domains:** two solution files declaring the same `domain` are both rejected.
 
 ---
 
@@ -143,18 +169,21 @@ wf reset
 
 ## 📖 Commands
 
+All workspace commands (`check`, `csx`, `sync`, `update`, `reset`) accept the global `--domain <name>` option. Without it they run once per solution file found in the project root.
+
 ### `wf check`
 
 **Purpose**: System health check
 
-Checks and displays:
-- vnext.config.json status and domain info
-- API connection status
+For every solution, checks and displays:
+- Solution file status, domain and components root
+- API connection status (skipped with a `wf domain add` hint when the domain has no CLI profile)
 - Database connection status
 - Component folders found
 
 ```bash
-wf check
+wf check                   # every solution in the workspace
+wf check --domain partner  # one solution
 ```
 
 ---
@@ -194,11 +223,14 @@ wf sync
 **Use when**: You modified existing components and want to update them
 
 ```bash
-wf update                  # Process changed files in Git (CSX + JSON)
-wf update --all            # Update all (asks for confirmation)
-wf update --file x.json    # Process a single file
-wf update --folder person  # Process every component under a feature folder, ignoring Git
+wf update                          # Process changed files in Git (CSX + JSON), every solution
+wf update --all                    # Update all (asks for confirmation once, for all domains)
+wf update --file x.json            # Process a single file (its solution is derived from the path)
+wf update --folder person          # Process every component under a feature folder, ignoring Git
+wf update --domain partner --all   # Only the "partner" solution
 ```
+
+In a multi-solution workspace `--file` is routed to the solution whose `componentsRoot` contains the file; combining it with a different `--domain` is an error. `--folder` is resolved inside each solution separately (an exact path is only accepted inside that solution's `componentsRoot`).
 
 **`--folder <name>` (`-d`)**: Updates every component belonging to a feature, across all component types, regardless of Git status. It resolves `<name>` in two ways:
 - **Feature name** (e.g. `person`): matches `<name>` under every component-type root (`Workflows/person`, `Tasks/person`, `Views/person`, `Schemas/person`, …) and updates all of them together.
@@ -228,8 +260,11 @@ wf update -d Workflows/person      # Only Workflows/person
 **Use when**: You need to force reset components regardless of changes
 
 ```bash
-wf reset  # Select folder from interactive menu
+wf reset                 # Select folder from interactive menu
+wf reset --domain core   # Skip the domain picker in a multi-solution workspace
 ```
+
+In a workspace with several solution files, `wf reset` first asks **which domain** to reset (unless `--domain` is given), then shows the folder menu for that solution.
 
 **Menu Options**:
 ```
@@ -260,10 +295,13 @@ wf reset  # Select folder from interactive menu
 **Use when**: You only want to update CSX content in JSONs without publishing to API
 
 ```bash
-wf csx              # Process changed files in Git
-wf csx --all        # Process all CSX files
-wf csx --file x.csx # Process a single file
+wf csx                       # Process changed files in Git, every solution
+wf csx --all                 # Process all CSX files
+wf csx --file x.csx          # Process a single file
+wf csx --domain partner      # Only the "partner" solution
 ```
+
+`csx` does not need a CLI domain profile, so it also runs for solutions whose domain has no profile yet.
 
 ---
 
@@ -285,7 +323,7 @@ wf config set DB_PASSWORD pass # Change a setting (on active domain)
 
 **Purpose**: Multidomain management
 
-Manage multiple domain configurations. Switch between domains with a single command. All CLI commands automatically use the active domain's settings.
+Manage multiple domain configurations (API/DB connection profiles). Workspace commands pick the profile whose name equals each solution's `domain`; `wf config get/set` operate on the **active** domain (`wf domain use`).
 
 ```bash
 # Show active domain name
@@ -447,23 +485,21 @@ wf update --folder Workflows/person
 
 ### 6. Multidomain Workflow
 ```bash
-# Add domains (one-time setup)
-wf domain add domain-a --API_BASE_URL http://localhost:4201 --DB_NAME vNext_DomainA
-wf domain add domain-b --API_BASE_URL http://localhost:4221 --DB_NAME vNext_DomainB
+# Add domain profiles (one-time setup)
+wf domain add core    --API_BASE_URL http://localhost:4201 --DB_NAME vNext_Core
+wf domain add partner --API_BASE_URL http://localhost:4221 --DB_NAME vNext_Partner
 
-# Option A: Auto-switch via vnext.config.json (recommended)
-# Just cd into the project - domain profile switches automatically
-cd ~/projects/domain-a-app   # vnext.config.json has "domain": "domain-a"
-wf update                    # auto-switches to domain-a profile
+# One workspace, two solution files
+cd ~/projects/my-workspace   # vnext.config.json ("core") + vnext.partner.config.json ("partner")
+wf check                     # both domains, each with its own banner
+wf update                    # git-changed files of core, then of partner
+wf update --domain partner   # only partner
 
-cd ~/projects/domain-b-app   # vnext.config.json has "domain": "domain-b"
-wf update                    # auto-switches to domain-b profile
+# Separate workspaces still work exactly as before
+cd ~/projects/core-app       # vnext.config.json has "domain": "core"
+wf update                    # uses the "core" profile
 
-# Option B: Manual switch (still works)
-wf domain use domain-a
-wf update
-
-# See all domains
+# See all profiles
 wf domain list
 ```
 
@@ -485,36 +521,33 @@ wf domain list
 
 ### Overview
 
-The CLI supports managing multiple domain configurations. Each domain has its own `API_BASE_URL`, `DB_NAME`, and other settings. Switch between domains with a single command.
+The CLI supports managing multiple domain configurations. Each domain has its own `API_BASE_URL`, `DB_NAME`, and other settings, stored as a **domain profile**. A workspace may contain one or many solution files, and each solution is processed with the profile that matches its `domain`.
 
-### Auto Domain Resolution
+### Solution → Profile Resolution
 
-When you run any command inside a vNext workspace that contains a `vnext.config.json`, the CLI **automatically** switches to the matching domain profile based on the `domain` field in the config file. This eliminates the need to manually run `wf domain use <name>` every time you switch between projects.
+Before a workspace command runs, the CLI:
 
-**How it works:**
-1. Before each command (except `wf domain`), the CLI checks if `vnext.config.json` exists in the current directory.
-2. If found, it reads the `domain` field and looks for a matching CLI domain profile (`DOMAINS[].DOMAIN_NAME`).
-3. If a match is found and it differs from the current active domain, it silently switches and shows a dim log message:
+1. Lists the solution files in the current directory: `vnext.config.json` plus every `vnext.{domain}.config.json`.
+2. Reads the `domain` field of each one.
+3. Looks up a CLI domain profile with the same name (`DOMAINS[].DOMAIN_NAME`).
+4. Runs the command once per solution, sequentially, with that profile's API/DB settings. A solution without a profile is skipped with a hint:
    ```
-   [auto] Domain switched to "onboarding" (from vnext.config.json)
+   ⚠ No CLI domain profile for "partner" — skipped.
+       Run: wf domain add partner --API_BASE_URL <url> --DB_NAME <db>
    ```
-4. If no `vnext.config.json` is found or no matching profile exists, the current active domain is kept (no error).
 
-**Example:** You have two projects and two domain profiles:
+`ACTIVE_DOMAIN` is **not** changed by running commands in a workspace. It only affects `wf domain active` and `wf config get/set`. Use `--domain <name>` to restrict a command to a single solution.
+
+> **Upgrading from 1.x:** earlier versions rewrote `ACTIVE_DOMAIN` to the workspace's domain on every command ("auto domain resolution"). That side effect is gone; `wf config get` now always shows the domain you last selected with `wf domain use`.
+
+**Example:** two profiles, two solutions in one workspace:
 ```bash
-# Add domain profiles once
-wf domain add core --DB_NAME vNext_Core
-wf domain add onboarding --DB_NAME vNext_Onboarding
+wf domain add core    --DB_NAME vNext_Core
+wf domain add partner --DB_NAME vNext_Partner
 
-# Now just cd into the project and run commands - domain switches automatically
-cd ~/projects/core-app        # has vnext.config.json with "domain": "core"
-wf update                     # auto-switches to "core" profile
-
-cd ~/projects/onboarding-app  # has vnext.config.json with "domain": "onboarding"
-wf update                     # auto-switches to "onboarding" profile
+cd ~/projects/my-workspace    # vnext.config.json (core) + vnext.partner.config.json (partner)
+wf update                     # core with the "core" profile, then partner with the "partner" profile
 ```
-
-> **Note:** The `wf domain` command is excluded from auto-resolution so that manual domain management is never interfered with.
 
 ### Backward Compatibility
 
@@ -617,6 +650,19 @@ wf check
 ```
 
 **Note:** No need to set PROJECT_ROOT - just `cd` into your project folder.
+
+### "No CLI domain profile for … — skipped"
+The solution's `domain` has no matching profile. Create one:
+```bash
+wf domain add <domain> --API_BASE_URL http://localhost:4201 --DB_NAME <db>
+wf domain list
+```
+
+### "DOMAIN_MISMATCH" in the error table
+A component's `domain` field is missing or differs from the `domain` of the solution file whose `componentsRoot` contains it. Fix the component's `domain` (or move the file to the right solution folder) and re-run.
+
+### "Domain "x" not found in this workspace"
+`--domain` names a domain that no solution file in the current directory declares. The message lists the available domains.
 
 ### "Cannot connect to API"
 ```bash
@@ -741,7 +787,8 @@ vnext-workflow-cli/
 │       ├── csx.js           # CSX processing
 │       ├── db.js            # Database operations
 │       ├── discover.js      # Component discovery
-│       ├── vnextConfig.js   # vnext.config.json reader
+│       ├── solutions.js     # Solution-file discovery + per-domain runner
+│       ├── vnextConfig.js   # Solution file (vnext*.config.json) parser
 │       └── workflow.js      # Workflow processing
 ├── .github/
 │   └── workflows/           # GitHub Actions workflows

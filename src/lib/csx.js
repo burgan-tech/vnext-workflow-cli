@@ -1,7 +1,7 @@
 const fs = require('fs').promises;
 const path = require('path');
 const { glob } = require('glob');
-const { discoverComponents, findAllJsonFiles, findJsonInComponent } = require('./discover');
+const { discoverComponents, findAllJsonFiles, findJsonInComponent, findAllCsxInComponents } = require('./discover');
 
 /**
  * Encodes CSX file to Base64
@@ -15,12 +15,12 @@ async function encodeToBase64(csxPath) {
 
 /**
  * Finds JSON files that reference the CSX file
- * Only searches in paths defined in vnext.config.json
+ * Only searches in paths defined by the solution
  * @param {string} csxPath - CSX file path
- * @param {string} projectRoot - Project root folder
+ * @param {Object} solution - Solution object (see lib/solutions.js)
  * @returns {Promise<string[]>} Matching JSON file paths
  */
-async function findJsonFilesForCsx(csxPath, projectRoot) {
+async function findJsonFilesForCsx(csxPath, solution) {
   // Derive the component directory from the CSX path:
   // CSX files always live under a "src/" subfolder of their component directory.
   // e.g. core/Workflows/contract/src/AlwaysTrueRule.csx
@@ -35,9 +35,9 @@ async function findJsonFilesForCsx(csxPath, projectRoot) {
     componentDir = parts.slice(0, srcIndex).join(path.sep);
   } else {
     // Fallback: search all discovered components (original behaviour)
-    const discovered = await discoverComponents(projectRoot);
+    const discovered = await discoverComponents(solution);
     const jsonFileInfos = await findAllJsonFiles(discovered);
-    const csxLocation = getCsxLocation(csxPath, projectRoot);
+    const csxLocation = getCsxLocation(csxPath);
     const matchingJsons = [];
     for (const jsonInfo of jsonFileInfos) {
       try {
@@ -53,7 +53,7 @@ async function findJsonFilesForCsx(csxPath, projectRoot) {
   }
 
   // Scan only the JSON files inside this component's directory
-  const csxLocation = getCsxLocation(csxPath, projectRoot);
+  const csxLocation = getCsxLocation(csxPath);
   const jsonFiles = await findJsonInComponent(componentDir);
   const matchingJsons = [];
 
@@ -74,10 +74,9 @@ async function findJsonFilesForCsx(csxPath, projectRoot) {
 /**
  * Calculates CSX location path
  * @param {string} csxPath - CSX file path
- * @param {string} projectRoot - Project root folder
  * @returns {string} Location path
  */
-function getCsxLocation(csxPath, projectRoot) {
+function getCsxLocation(csxPath) {
   // Convert to ./src/Rules/MyRule.csx format
   const parts = csxPath.split(path.sep);
   const srcIndex = parts.lastIndexOf('src');
@@ -173,18 +172,18 @@ async function readNativeContent(csxPath) {
  * Updates ALL referencing JSON files
  * Supports both NAT (native) and B64 (Base64) encoding
  * @param {string} csxPath - CSX file path
- * @param {string} projectRoot - Project root folder
+ * @param {Object} solution - Solution object
  * @returns {Promise<Object>} Process result
  */
-async function processCsxFile(csxPath, projectRoot) {
+async function processCsxFile(csxPath, solution) {
   // Read native content
   const nativeCode = await readNativeContent(csxPath);
   
   // Convert to Base64
   const base64Code = Buffer.from(nativeCode).toString('base64');
   
-  // Find ALL related JSONs (only in paths defined in vnext.config.json)
-  const jsonFiles = await findJsonFilesForCsx(csxPath, projectRoot);
+  // Find ALL related JSONs (only in paths defined by the solution)
+  const jsonFiles = await findJsonFilesForCsx(csxPath, solution);
   
   if (jsonFiles.length === 0) {
     return { 
@@ -197,7 +196,7 @@ async function processCsxFile(csxPath, projectRoot) {
   }
   
   // Calculate CSX location
-  const csxLocation = getCsxLocation(csxPath, projectRoot);
+  const csxLocation = getCsxLocation(csxPath);
   
   // Update each JSON
   let updatedJsonCount = 0;
@@ -230,43 +229,47 @@ async function processCsxFile(csxPath, projectRoot) {
 }
 
 /**
- * Finds changed CSX files in Git
- * @param {string} projectRoot - Project root folder
+ * Finds changed CSX files in Git that belong to ONE solution.
+ * `git status` runs from the git root (which may be above the project root);
+ * results are filtered down to the solution's componentsRoot.
+ * @param {Object} solution - Solution object
  * @returns {Promise<string[]>} Changed CSX file paths
  */
-async function getGitChangedCsx(projectRoot) {
+async function getGitChangedCsx(solution) {
   const { exec } = require('child_process');
   const util = require('util');
   const execPromise = util.promisify(exec);
   const fsSync = require('fs');
-  
+
+  const rootPrefix = path.normalize(solution.componentsRoot) + path.sep;
+
   try {
     // Find git root
-    const { stdout: gitRoot } = await execPromise('git rev-parse --show-toplevel', { cwd: projectRoot });
+    const { stdout: gitRoot } = await execPromise('git rev-parse --show-toplevel', { cwd: solution.projectRoot });
     const gitRootDir = gitRoot.trim();
-    
+
     // Run git status from git root
     const { stdout } = await execPromise('git status --porcelain', { cwd: gitRootDir });
     const lines = stdout.split('\n').filter(Boolean);
-    
+
     const csxFiles = lines
       .filter(line => line.includes('.csx'))
       .map(line => {
         // Git status output format: "XY filename"
         const file = line.substring(3).trim();
-        
+
         // Git output is relative to git root, not project root
         const fullPath = path.join(gitRootDir, file);
-        
+
         return path.normalize(fullPath);
       })
       .filter(file => {
-        // Only .csx files that exist and are in our project
-        return file.endsWith('.csx') && 
+        // Only .csx files that exist and are inside this solution's componentsRoot
+        return file.endsWith('.csx') &&
                fsSync.existsSync(file) &&
-               file.startsWith(path.normalize(projectRoot));
+               file.startsWith(rootPrefix);
       });
-    
+
     return csxFiles;
   } catch (error) {
     return [];
@@ -276,12 +279,11 @@ async function getGitChangedCsx(projectRoot) {
 /**
  * Finds all CSX files in discovered components ONLY
  * Does NOT scan folders outside of paths definition
- * @param {string} projectRoot - Project root folder
+ * @param {Object} solution - Solution object
  * @returns {Promise<string[]>} CSX file paths
  */
-async function findAllCsx(projectRoot) {
-  const { findAllCsxInComponents } = require('./discover');
-  return findAllCsxInComponents(projectRoot);
+async function findAllCsx(solution) {
+  return findAllCsxInComponents(solution);
 }
 
 module.exports = {

@@ -1,61 +1,72 @@
 const fs = require('fs').promises;
 const path = require('path');
 const { glob } = require('glob');
-const { publishComponent } = require('./api');
-const { getInstanceId, deleteWorkflow } = require('./db');
-const { getComponentTypes } = require('./vnextConfig');
-const { discoverComponents, findJsonInComponent, toGlobPattern } = require('./discover');
+const { toGlobPattern, JSON_IGNORE_PATTERNS } = require('./discover');
 
 /**
- * Gets key and version values from JSON file
+ * Gets key, version, flow and domain values from a component JSON file
  * @param {string} jsonPath - JSON file path
  * @returns {Promise<Object>} Metadata object
  */
 async function getJsonMetadata(jsonPath) {
   const content = await fs.readFile(jsonPath, 'utf8');
   const data = JSON.parse(content);
-  
+
   return {
     key: data.key || null,
     version: data.version || null,
     flow: data.flow || null,
+    domain: data.domain || null,
     data: data
   };
 }
 
 /**
- * Detects component type from file path based on vnext.config.json paths
+ * Checks that a component belongs to the solution it was found in.
+ * A component must declare `domain` and it must equal the solution's domain;
+ * otherwise it would be published with another domain's API/DB settings.
+ * @param {Object} metadata - Result of getJsonMetadata
+ * @param {Object} solution - Solution object (see lib/solutions.js)
+ * @returns {string|null} Error message, or null when the component is fine
+ */
+function checkComponentDomain(metadata, solution) {
+  if (!metadata.domain) {
+    return `component has no "domain" field (solution domain "${solution.domain}")`;
+  }
+  if (metadata.domain !== solution.domain) {
+    return `component domain "${metadata.domain}" does not match solution domain "${solution.domain}"`;
+  }
+  return null;
+}
+
+/**
+ * Detects component type from file path based on the solution's paths
  * @param {string} jsonPath - JSON file path
- * @param {string} projectRoot - Project root folder
+ * @param {Object} solution - Solution object
  * @returns {string} Component type (sys-flows, sys-tasks, etc.)
  */
-function detectComponentType(jsonPath, projectRoot) {
+function detectComponentType(jsonPath, solution) {
   const pathLower = jsonPath.toLowerCase();
-  
-  try {
-    const componentTypes = getComponentTypes(projectRoot);
-    
-    // Check each component type folder
-    for (const [type, folderName] of Object.entries(componentTypes)) {
-      const folderPattern = `/${folderName.toLowerCase()}/`;
-      if (pathLower.includes(folderPattern)) {
-        // Map to flow type
-        switch (type.toLowerCase()) {
-          case 'workflows': return 'sys-flows';
-          case 'tasks': return 'sys-tasks';
-          case 'schemas': return 'sys-schemas';
-          case 'views': return 'sys-views';
-          case 'functions': return 'sys-functions';
-          case 'extensions': return 'sys-extensions';
-          case 'mappings': return 'sys-mappings';
-          default: return `sys-${type.toLowerCase()}`;
-        }
+  const componentTypes = (solution && solution.componentTypes) || {};
+
+  // Check each component type folder
+  for (const [type, folderName] of Object.entries(componentTypes)) {
+    const folderPattern = `/${folderName.toLowerCase()}/`;
+    if (pathLower.includes(folderPattern)) {
+      // Map to flow type
+      switch (type.toLowerCase()) {
+        case 'workflows': return 'sys-flows';
+        case 'tasks': return 'sys-tasks';
+        case 'schemas': return 'sys-schemas';
+        case 'views': return 'sys-views';
+        case 'functions': return 'sys-functions';
+        case 'extensions': return 'sys-extensions';
+        case 'mappings': return 'sys-mappings';
+        default: return `sys-${type.toLowerCase()}`;
       }
     }
-  } catch (error) {
-    // Fallback to path-based detection
   }
-  
+
   // Fallback: detect from path directly
   if (pathLower.includes('/workflows/')) return 'sys-flows';
   if (pathLower.includes('/tasks/')) return 'sys-tasks';
@@ -69,92 +80,51 @@ function detectComponentType(jsonPath, projectRoot) {
 }
 
 /**
- * Processes a single component (DB check → delete if exists → publish)
- * @param {string} jsonPath - JSON file path
- * @param {Object} dbConfig - Database configuration
- * @param {string} baseUrl - API base URL
- * @param {string} projectRoot - Project root folder
- * @returns {Promise<Object>} Process result
- */
-async function processComponent(jsonPath, dbConfig, baseUrl, projectRoot) {
-  const metadata = await getJsonMetadata(jsonPath);
-  
-  if (!metadata.key || !metadata.version) {
-    throw new Error('No key or version found in JSON');
-  }
-  
-  const componentType = detectComponentType(jsonPath, projectRoot);
-  const flow = metadata.flow || componentType;
-  
-  // 1. Check if exists in DB
-  const existingId = await getInstanceId(dbConfig, flow, metadata.key, metadata.version);
-  
-  // 2. If exists, delete first
-  let wasDeleted = false;
-  if (existingId) {
-    await deleteWorkflow(dbConfig, flow, existingId);
-    wasDeleted = true;
-  }
-  
-  // 3. Publish to API
-  const result = await publishComponent(baseUrl, metadata.data);
-  
-  if (!result.success) {
-    throw new Error(result.error);
-  }
-  
-  return {
-    key: metadata.key,
-    version: metadata.version,
-    componentType: componentType,
-    wasDeleted: wasDeleted,
-    success: true
-  };
-}
-
-/**
- * Finds changed JSON files in Git
- * Only returns files within PROJECT_ROOT
- * @param {string} projectRoot - Project root folder
+ * Finds changed JSON files in Git that belong to ONE solution.
+ * `git status` runs from the git root (which may be above the project root);
+ * results are filtered down to the solution's componentsRoot.
+ * @param {Object} solution - Solution object
  * @returns {Promise<string[]>} Changed JSON file paths
  */
-async function getGitChangedJson(projectRoot) {
+async function getGitChangedJson(solution) {
   const { exec } = require('child_process');
   const util = require('util');
   const execPromise = util.promisify(exec);
   const fsSync = require('fs');
-  
+
+  const rootPrefix = path.normalize(solution.componentsRoot) + path.sep;
+
   try {
     // Find git root
-    const { stdout: gitRoot } = await execPromise('git rev-parse --show-toplevel', { cwd: projectRoot });
+    const { stdout: gitRoot } = await execPromise('git rev-parse --show-toplevel', { cwd: solution.projectRoot });
     const gitRootDir = gitRoot.trim();
-    
+
     // Run git status from git root
     const { stdout } = await execPromise('git status --porcelain', { cwd: gitRootDir });
     const lines = stdout.split('\n').filter(Boolean);
-    
+
     const jsonFiles = lines
       .filter(line => line.includes('.json'))
       .map(line => {
         // Git status output format: "XY filename"
         const file = line.substring(3).trim();
-        
+
         // Git output is relative to git root
         const fullPath = path.join(gitRootDir, file);
-        
+
         return path.normalize(fullPath);
       })
       .filter(file => {
-        // Filter workflow JSONs and only those in project
+        // Filter component JSONs and only those inside this solution's componentsRoot
         const fileName = path.basename(file);
-        return file.endsWith('.json') && 
-               !fileName.includes('package') && 
+        return file.endsWith('.json') &&
+               !fileName.includes('package') &&
                !fileName.includes('config') &&
                !fileName.includes('.diagram.') &&
                fsSync.existsSync(file) &&
-               file.startsWith(path.normalize(projectRoot));
+               file.startsWith(rootPrefix);
       });
-    
+
     return jsonFiles;
   } catch (error) {
     return [];
@@ -169,13 +139,7 @@ async function getGitChangedJson(projectRoot) {
 async function findAllJsonInComponent(componentDir) {
   const pattern = toGlobPattern(componentDir, '**/*.json');
   const files = await glob(pattern, {
-    ignore: [
-      '**/.meta/**',
-      '**/.meta',
-      '**/*.diagram.json',
-      '**/package*.json',
-      '**/*config*.json'
-    ]
+    ignore: JSON_IGNORE_PATTERNS
   });
   return files;
 }
@@ -188,7 +152,7 @@ async function findAllJsonInComponent(componentDir) {
  */
 async function findAllJson(discovered) {
   const allJsons = [];
-  
+
   // Only scan folders that were discovered from paths
   for (const component in discovered) {
     const componentDir = discovered[component];
@@ -197,14 +161,14 @@ async function findAllJson(discovered) {
       allJsons.push(...jsons);
     }
   }
-  
+
   return allJsons;
 }
 
 module.exports = {
   getJsonMetadata,
+  checkComponentDomain,
   detectComponentType,
-  processComponent,
   getGitChangedJson,
   findAllJsonInComponent,
   findAllJson

@@ -1,7 +1,28 @@
 const { glob } = require('glob');
 const path = require('path');
 const fs = require('fs');
-const { getComponentsRoot, getComponentTypes } = require('./vnextConfig');
+
+/**
+ * Glob ignore rules for component JSON files. Shared by every place that
+ * scans a component folder so the rules cannot drift apart.
+ */
+const JSON_IGNORE_PATTERNS = [
+  '**/.meta/**',
+  '**/.meta',
+  '**/*.diagram.json',
+  '**/package*.json',
+  '**/*config*.json'
+];
+
+/**
+ * Glob ignore rules for CSX files.
+ */
+const CSX_IGNORE_PATTERNS = [
+  '**/.meta/**',
+  '**/.meta',
+  '**/node_modules/**',
+  '**/dist/**'
+];
 
 /**
  * Builds a glob pattern with forward slashes.
@@ -17,26 +38,25 @@ function toGlobPattern(dir, suffix) {
 }
 
 /**
- * Discovers component folders based on vnext.config.json paths
- * Only scans folders defined in paths, ignores everything else
- * @param {string} projectRoot - Project root folder (PROJECT_ROOT)
- * @returns {Object} Discovered component folders
+ * Discovers component folders of one solution based on its paths.
+ * Only scans folders defined in paths, ignores everything else.
+ * @param {Object} solution - Solution object (see lib/solutions.js)
+ * @returns {Object} Discovered component folders { type: absoluteDir }
  */
-async function discoverComponents(projectRoot) {
-  const componentsRoot = getComponentsRoot(projectRoot);
-  const componentTypes = getComponentTypes(projectRoot);
-  
+async function discoverComponents(solution) {
+  const { componentsRoot, componentTypes } = solution;
+
   const discovered = {};
-  
+
   // Only look for folders defined in paths
   for (const [type, folderName] of Object.entries(componentTypes)) {
     const componentDir = path.join(componentsRoot, folderName);
-    
+
     if (fs.existsSync(componentDir) && fs.statSync(componentDir).isDirectory()) {
       discovered[type] = componentDir;
     }
   }
-  
+
   return discovered;
 }
 
@@ -51,15 +71,9 @@ async function findJsonInComponent(componentDir) {
   const pattern = toGlobPattern(componentDir, '**/*.json');
 
   const files = await glob(pattern, {
-    ignore: [
-      '**/.meta/**',
-      '**/.meta',
-      '**/*.diagram.json',
-      '**/package*.json',
-      '**/*config*.json'
-    ]
+    ignore: JSON_IGNORE_PATTERNS
   });
-  
+
   return files;
 }
 
@@ -71,12 +85,12 @@ async function findJsonInComponent(componentDir) {
  */
 async function findAllJsonFiles(discovered) {
   const allFiles = [];
-  
+
   // Only scan folders that were discovered from paths
   for (const [type, componentDir] of Object.entries(discovered)) {
     if (componentDir) {
       const files = await findJsonInComponent(componentDir);
-      
+
       for (const file of files) {
         allFiles.push({
           path: file,
@@ -86,36 +100,31 @@ async function findAllJsonFiles(discovered) {
       }
     }
   }
-  
+
   return allFiles;
 }
 
 /**
  * Finds all CSX files in discovered components ONLY
  * Does NOT scan folders outside of paths definition
- * @param {string} projectRoot - Project root folder
+ * @param {Object} solution - Solution object
  * @returns {Promise<string[]>} CSX file paths
  */
-async function findAllCsxInComponents(projectRoot) {
-  const discovered = await discoverComponents(projectRoot);
+async function findAllCsxInComponents(solution) {
+  const discovered = await discoverComponents(solution);
   const allCsxFiles = [];
-  
+
   // Only scan folders that were discovered from paths
   for (const [type, componentDir] of Object.entries(discovered)) {
     if (componentDir) {
       const pattern = toGlobPattern(componentDir, '**/*.csx');
       const files = await glob(pattern, {
-        ignore: [
-          '**/.meta/**',
-          '**/.meta',
-          '**/node_modules/**',
-          '**/dist/**'
-        ]
+        ignore: CSX_IGNORE_PATTERNS
       });
       allCsxFiles.push(...files);
     }
   }
-  
+
   return allCsxFiles;
 }
 
@@ -137,7 +146,7 @@ function getComponentDir(discovered, component) {
  */
 function listDiscovered(discovered, componentTypes) {
   const results = [];
-  
+
   for (const [type, folderName] of Object.entries(componentTypes)) {
     results.push({
       name: type,
@@ -146,50 +155,53 @@ function listDiscovered(discovered, componentTypes) {
       found: !!discovered[type]
     });
   }
-  
+
   return results;
 }
 
 /**
- * Resolves a folder name to a list of directories to update.
+ * Resolves a folder name to a list of directories to update, within ONE solution.
  *
  * Two resolution modes (in order):
  *   a) Exact path: if `name` resolves to an existing directory (absolute, or
- *      relative to projectRoot, or relative to componentsRoot), that single
- *      directory is returned.
+ *      relative to projectRoot, or relative to componentsRoot) AND that
+ *      directory lies under this solution's componentsRoot, that single
+ *      directory is returned. A directory outside the componentsRoot belongs
+ *      to another solution and is not accepted here.
  *   b) Feature name: otherwise, `name` is treated as a feature folder name and
  *      matched against every discovered component-type root. Every
  *      `<componentRoot>/<name>` that exists as a directory is collected, so a
  *      feature spread across Workflows/, Views/, Schemas/, … is gathered.
  *
- * @param {string} projectRoot - Project root folder
+ * @param {Object} solution - Solution object
  * @param {string} name - Folder name or relative/absolute path
  * @returns {Promise<string[]>} Absolute directory paths (empty if nothing matched)
  */
-async function resolveFeatureFolders(projectRoot, name) {
+async function resolveFeatureFolders(solution, name) {
   const isDir = (p) => fs.existsSync(p) && fs.statSync(p).isDirectory();
+  const root = path.normalize(solution.componentsRoot);
+  const isInsideRoot = (p) => {
+    const abs = path.normalize(path.resolve(p));
+    return abs === root || abs.startsWith(root + path.sep);
+  };
 
-  // a) Exact-path resolution
+  // a) Exact-path resolution (only accepted inside this solution's componentsRoot)
   const candidates = [];
   if (path.isAbsolute(name)) {
     candidates.push(name);
   } else {
-    candidates.push(path.join(projectRoot, name));
-    try {
-      candidates.push(path.join(getComponentsRoot(projectRoot), name));
-    } catch (error) {
-      // componentsRoot may be unavailable; ignore and fall through
-    }
+    candidates.push(path.join(solution.projectRoot, name));
+    candidates.push(path.join(solution.componentsRoot, name));
   }
 
   for (const candidate of candidates) {
-    if (isDir(candidate)) {
+    if (isDir(candidate) && isInsideRoot(candidate)) {
       return [path.resolve(candidate)];
     }
   }
 
   // b) Feature-name match across discovered component roots
-  const discovered = await discoverComponents(projectRoot);
+  const discovered = await discoverComponents(solution);
   const dirs = [];
   for (const componentDir of Object.values(discovered)) {
     const featureDir = path.join(componentDir, name);
@@ -206,11 +218,11 @@ async function resolveFeatureFolders(projectRoot, name) {
  * names across all discovered component-type roots. Used for error messages
  * when a requested folder name does not match anything.
  *
- * @param {string} projectRoot - Project root folder
+ * @param {Object} solution - Solution object
  * @returns {Promise<string[]>} Sorted unique feature folder names
  */
-async function listFeatureFolders(projectRoot) {
-  const discovered = await discoverComponents(projectRoot);
+async function listFeatureFolders(solution) {
+  const discovered = await discoverComponents(solution);
   const names = new Set();
 
   for (const componentDir of Object.values(discovered)) {
@@ -238,18 +250,20 @@ async function listFeatureFolders(projectRoot) {
  */
 function detectComponentTypeFromPath(filePath, componentTypes) {
   const normalizedPath = filePath.toLowerCase();
-  
+
   for (const [type, folderName] of Object.entries(componentTypes)) {
     const folderPattern = `/${folderName.toLowerCase()}/`;
     if (normalizedPath.includes(folderPattern)) {
       return type;
     }
   }
-  
+
   return 'unknown';
 }
 
 module.exports = {
+  JSON_IGNORE_PATTERNS,
+  CSX_IGNORE_PATTERNS,
   toGlobPattern,
   discoverComponents,
   findJsonInComponent,

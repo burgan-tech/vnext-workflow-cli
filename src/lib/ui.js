@@ -1,5 +1,4 @@
 const chalk = require('chalk');
-const config = require('./config');
 
 const LOG = {
   separator: () => console.log(chalk.cyan('═'.repeat(60))),
@@ -81,16 +80,19 @@ function printApiError(result, componentType, fileName) {
 /**
  * Prints a two-layer summary table for batch operation errors.
  * Each row shows component/file/HTTP/errorCode/detail, and if validation
- * errors exist they are expanded below the row.
+ * errors exist they are expanded below the row. A Domain column is added
+ * when any row carries a `domain` (multi-solution runs).
  */
 function printErrorSummaryTable(errors) {
   if (!errors || errors.length === 0) return;
 
-  const COL = { idx: 3, type: 16, file: 26, http: 5, code: 16, detail: 36 };
-  const totalWidth = COL.idx + COL.type + COL.file + COL.http + COL.code + COL.detail + 15;
+  const withDomain = errors.some(e => e.domain);
+  const COL = { idx: 3, domain: 12, type: 16, file: 26, http: 5, code: 16, detail: 36 };
+  const totalWidth = COL.idx + (withDomain ? COL.domain + 3 : 0) + COL.type + COL.file + COL.http + COL.code + COL.detail + 15;
 
   const pad = (str, len) => String(str || '').padEnd(len);
   const divider = () => console.log(chalk.dim(`  ${'─'.repeat(totalWidth)}`));
+  const domainCell = (text, style) => withDomain ? style(pad(text, COL.domain)) + chalk.dim(' │ ') : '';
 
   console.log(chalk.red.bold(`\n  ERRORS (${errors.length})\n`));
 
@@ -98,6 +100,7 @@ function printErrorSummaryTable(errors) {
   console.log(
     chalk.dim('  ') +
     chalk.white.bold(pad('#', COL.idx)) + chalk.dim(' │ ') +
+    domainCell('Domain', chalk.white.bold) +
     chalk.white.bold(pad('Component', COL.type)) + chalk.dim(' │ ') +
     chalk.white.bold(pad('File', COL.file)) + chalk.dim(' │ ') +
     chalk.white.bold(pad('HTTP', COL.http)) + chalk.dim(' │ ') +
@@ -110,12 +113,13 @@ function printErrorSummaryTable(errors) {
     const err = errors[i];
     const api = err.apiError;
     const statusCode = err.statusCode || '';
-    const errorCode = api?.errorCode || '';
+    const errorCode = err.errorCode || api?.errorCode || '';
     const detail = (api?.detail || err.error || '').substring(0, COL.detail);
 
     console.log(
       chalk.dim('  ') +
       chalk.dim(pad(i + 1, COL.idx)) + chalk.dim(' │ ') +
+      domainCell(err.domain, chalk.magenta) +
       chalk.cyan(pad(err.type, COL.type)) + chalk.dim(' │ ') +
       chalk.white(pad(err.file, COL.file)) + chalk.dim(' │ ') +
       chalk.red.bold(pad(statusCode, COL.http)) + chalk.dim(' │ ') +
@@ -155,21 +159,32 @@ function printErrorSummaryTable(errors) {
 }
 
 /**
- * Prints a boxed banner showing the active domain and API URL.
- * Called from the preAction hook before every command.
+ * Prints a boxed banner for one solution: its domain, the solution file it
+ * came from and the API it will talk to (or a hint that no CLI profile exists).
+ * Printed once per solution by lib/solutions.js runForEachSolution.
+ * @param {Object} solution - Solution object (see lib/solutions.js)
  */
-function printActiveDomainBanner() {
-  const domain = config.get('ACTIVE_DOMAIN') || 'default';
-  const apiUrl = config.get('API_BASE_URL') || '-';
+function printSolutionBanner(solution) {
+  const apiText = solution.profile
+    ? (solution.profile.API_BASE_URL || '-')
+    : 'no CLI profile';
 
-  const domainLine = `Domain: ${domain}`;
-  const apiLine = `API:    ${apiUrl}`;
-  const innerWidth = Math.max(domainLine.length, apiLine.length) + 4;
+  const lines = [
+    { text: `Domain:   ${solution.domain}`, style: chalk.white.bold },
+    { text: `Solution: ${solution.fileName}`, style: chalk.dim },
+    { text: `API:      ${apiText}`, style: solution.profile ? chalk.dim : chalk.yellow }
+  ];
+  const innerWidth = Math.max(...lines.map(l => l.text.length)) + 4;
 
   console.log();
   console.log(chalk.cyan(`  ┌${'─'.repeat(innerWidth)}┐`));
-  console.log(chalk.cyan('  │') + `  ${chalk.white.bold(domainLine)}${' '.repeat(innerWidth - domainLine.length - 2)}` + chalk.cyan('│'));
-  console.log(chalk.cyan('  │') + `  ${chalk.dim(apiLine)}${' '.repeat(innerWidth - apiLine.length - 2)}` + chalk.cyan('│'));
+  for (const line of lines) {
+    console.log(
+      chalk.cyan('  │') +
+      `  ${line.style(line.text)}${' '.repeat(innerWidth - line.text.length - 2)}` +
+      chalk.cyan('│')
+    );
+  }
   console.log(chalk.cyan(`  └${'─'.repeat(innerWidth)}┘`));
 }
 
@@ -177,5 +192,5 @@ module.exports = {
   LOG,
   printApiError,
   printErrorSummaryTable,
-  printActiveDomainBanner
+  printSolutionBanner
 };

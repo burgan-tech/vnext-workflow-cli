@@ -91,3 +91,14 @@ test('package revisions match runtime selectors and ignore build metadata',()=>{
    assert.equal(resolveMaster(schemas,{...ref,version},'test').version,expected);
  assert.throws(()=>resolveMaster(schemas,{...ref,version:'1.0.0-pkg.1.3.0'},'test'));
 });
+
+
+test('conditional indexed nodes and ancestors are rejected without rejecting unrelated unindexed fields',()=>{
+ for (const keyword of ['allOf','anyOf','oneOf','not','if','then','else','dependentSchemas']) {
+  const condition=['allOf','anyOf','oneOf'].includes(keyword)?[{}]:{};
+  assert.throws(()=>fieldsFromSchema({properties:{amount:{type:'number','x-indexed':true,[keyword]:condition}}}),/amount/);
+  assert.throws(()=>fieldsFromSchema({[keyword]:condition,properties:{amount:{type:'number','x-indexed':true}}}),/amount/);
+ }
+ const fields=fieldsFromSchema({properties:{amount:{type:'number','x-indexed':true},other:{type:'string',oneOf:[{maxLength:10}]}}});
+ assert.deepEqual(fields.map(field=>field.path),['amount']);
+});

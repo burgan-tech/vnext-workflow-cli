@@ -27,6 +27,7 @@ function fieldsFromSchema(root) {
   function visit(node, fieldPath, supported) {
     if (Array.isArray(node)) { node.forEach(n => visit(n, fieldPath, false)); return; }
     if (!node || typeof node !== 'object') return;
+    supported = supported && !['$ref', 'allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else', 'dependentSchemas'].some(key => key in node);
     if ('x-indexed' in node && typeof node['x-indexed'] !== 'boolean')
       throw new Error(`Field '${fieldPath}': x-indexed must be boolean.`);
     if (node['x-indexed'] === true) {
@@ -43,9 +44,9 @@ function fieldsFromSchema(root) {
       if (key === 'properties' && child && typeof child === 'object' && !Array.isArray(child)) {
         for (const [name, value] of Object.entries(child))
           visit(value, fieldPath ? `${fieldPath}.${name}` : name, supported && (!node.type || node.type === 'object') && !name.includes('.'));
-      } else if (['$defs', 'definitions', 'patternProperties'].includes(key)) {
+      } else if (['$defs', 'definitions', 'patternProperties', 'dependentSchemas'].includes(key)) {
         Object.values(child || {}).forEach(value => visit(value, fieldPath, false));
-      } else if (['items', 'prefixItems', 'allOf', 'anyOf', 'oneOf', 'if', 'then', 'else', 'additionalProperties'].includes(key)) {
+      } else if (['items', 'prefixItems', 'allOf', 'anyOf', 'oneOf', 'if', 'then', 'else', 'not', 'additionalProperties'].includes(key)) {
         visit(child, fieldPath, false);
       }
     }

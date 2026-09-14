@@ -13,7 +13,7 @@ function workspace() {
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'vnext-indexes-'));
  const write=(file, data)=>{ const target=path.join(root,file);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,JSON.stringify(data)); };
  write('vnext.config.json',{domain:'test', paths:{componentsRoot:'components',workflows:'Workflows',schemas:'Schemas'}});
- const master={key:'master',version:'1.0.0',domain:'test',flow:'sys-schemas',attributes:{schema:{type:'object',properties:{amount:{type:'number','x-indexed':true,'x-filterOperators':['gt']}}}}};
+ const master={type:'master',key:'master',version:'1.0.0',domain:'test',flow:'sys-schemas',attributes:{type:'workflow',schema:{type:'object',properties:{amount:{type:'number','x-indexed':true,'x-filterOperators':['gt']}}}}};
  const flow={key:'orders',version:'1.0.0',domain:'test',flow:'sys-flows',attributes:{schema:{key:'master',domain:'test',flow:'sys-schemas',version:'latest'}}};
  write('components/Schemas/master.json',master);write('components/Workflows/orders.json',flow);
  return {root,write,master,flow};
@@ -29,12 +29,12 @@ test('physical contract and readable names are stable, case-sensitive paths do n
  assert.equal(physicalSchema('Order-Flow'),'order_flow'); assert.throws(()=>physicalSchema('x;drop schema y'));
 });
 test('nested scalars supported; ambiguous, array, ref, conditional and invalid metadata rejected',()=>{
- assert.equal(fieldsFromSchema({properties:{nested:{type:'object',properties:{value:{type:'boolean','x-indexed':true}}}}})[0].path,'nested.value');
+ assert.equal(fieldsFromSchema({properties:{nested:{type:'object',properties:{value:{type:'boolean','x-indexed':true}}}}}, 'master')[0].path,'nested.value');
  for(const node of [{type:'array','x-indexed':true},{type:['number','null'],'x-indexed':true},{type:'number','x-indexed':'true'},{type:'number','$ref':'x','x-indexed':true},{type:'number','x-indexed':true,'x-filterOperators':'gt'}])
-   assert.throws(()=>fieldsFromSchema({properties:{x:node}}));
- assert.throws(()=>fieldsFromSchema({allOf:[{properties:{x:{type:'number','x-indexed':true}}}]}));
- assert.throws(()=>fieldsFromSchema({properties:{xs:{type:'array',items:{properties:{x:{type:'number','x-indexed':true}}}}}}));
- assert.throws(()=>fieldsFromSchema({properties:{'a.b':{type:'number','x-indexed':true}}}));
+   assert.throws(()=>fieldsFromSchema({properties:{x:node}}, 'master'));
+ assert.throws(()=>fieldsFromSchema({allOf:[{properties:{x:{type:'number','x-indexed':true}}}]}, 'master'));
+ assert.throws(()=>fieldsFromSchema({properties:{xs:{type:'array',items:{properties:{x:{type:'number','x-indexed':true}}}}}}, 'master'));
+ assert.throws(()=>fieldsFromSchema({properties:{'a.b':{type:'number','x-indexed':true}}}, 'master'));
 });
 test('version resolution is numeric, pinned/local, and fails closed for missing references',()=>{
  const schemas=['1.2.0','1.10.0','2.0.0'].map(version=>({domain:'test',key:'m',version}));
@@ -96,9 +96,71 @@ test('package revisions match runtime selectors and ignore build metadata',()=>{
 test('conditional indexed nodes and ancestors are rejected without rejecting unrelated unindexed fields',()=>{
  for (const keyword of ['allOf','anyOf','oneOf','not','if','then','else','dependentSchemas']) {
   const condition=['allOf','anyOf','oneOf'].includes(keyword)?[{}]:{};
-  assert.throws(()=>fieldsFromSchema({properties:{amount:{type:'number','x-indexed':true,[keyword]:condition}}}),/amount/);
-  assert.throws(()=>fieldsFromSchema({[keyword]:condition,properties:{amount:{type:'number','x-indexed':true}}}),/amount/);
+  assert.throws(()=>fieldsFromSchema({properties:{amount:{type:'number','x-indexed':true,[keyword]:condition}}}, 'master'),/amount/);
+  assert.throws(()=>fieldsFromSchema({[keyword]:condition,properties:{amount:{type:'number','x-indexed':true}}}, 'master'),/amount/);
  }
- const fields=fieldsFromSchema({properties:{amount:{type:'number','x-indexed':true},other:{type:'string',oneOf:[{maxLength:10}]}}});
+ const fields=fieldsFromSchema({properties:{amount:{type:'number','x-indexed':true},other:{type:'string',oneOf:[{maxLength:10}]}}}, 'master');
  assert.deepEqual(fields.map(field=>field.path),['amount']);
+});
+
+
+test('only referenced master schemas produce SQL plans; skip non-master latest versions without falling back',async()=>{
+ const w=workspace();
+ try {
+  for(const type of ['transition','view','function']) {
+   w.write('components/Schemas/master.json',{...w.master,type,attributes:{schema:{type:'object',properties:{name:{type:'string'}}}}});
+   assert.deepEqual(await loadPlans(w.root),[]);
+   await assert.rejects(generate({output:'ignored-output'},w.root),/No workflows referencing type: master/);
+   assert.equal(fs.existsSync(path.join(w.root,'ignored-output')),false);
+  }
+  w.write('components/Schemas/master.json',w.master);
+  w.write('components/Schemas/next.json',{...w.master,version:'2.0.0',type:'transition',attributes:{schema:{type:'object'}}});
+  assert.deepEqual(await loadPlans(w.root),[]);
+  w.write('components/Workflows/orders.json',{...w.flow,attributes:{schema:{...w.flow.attributes.schema,version:'1.0.0'}}});
+  assert.equal((await loadPlans(w.root)).length,1);
+ } finally {fs.rmSync(w.root,{recursive:true,force:true});}
+});
+
+test('non-master x-indexed metadata and invalid schema purposes fail validation',async()=>{
+ const w=workspace();
+ try {
+  for(const type of ['transition','view','function']) {
+   for(const indexed of [true,false]) {
+    w.write('components/Schemas/master.json',{...w.master,type,attributes:{schema:{properties:{nested:{properties:{value:{type:'number','x-indexed':indexed}}}}}}});
+    await assert.rejects(loadPlans(w.root),/x-indexed is only allowed.*master/);
+   }
+  }
+  for(const type of ['workflow','json-schema','MASTER',42,{},[]]) {
+   w.write('components/Schemas/master.json',{...w.master,type,attributes:{schema:{type:'object'}}});
+   await assert.rejects(loadPlans(w.root),/Schema type must be one of/);
+  }
+ } finally {fs.rmSync(w.root,{recursive:true,force:true});}
+});
+
+
+test('root type controls indexing while existing attributes.type remains independent',async()=>{
+ const w=workspace();
+ try {
+  for(const attributeType of ['workflow','task','function','view','schema','extension','headers','json-schema']) {
+   w.write('components/Schemas/master.json',{...w.master,attributes:{...w.master.attributes,type:attributeType}});
+   assert.equal((await loadPlans(w.root)).length,1);
+  }
+  w.write('components/Schemas/master.json',{...w.master,type:'view',attributes:{type:'master',schema:{type:'object'}}});
+  assert.deepEqual(await loadPlans(w.root),[]);
+  w.write('components/Schemas/master.json',{...w.master,type:undefined,attributes:{...w.master.attributes,type:'master'}});
+  await assert.rejects(loadPlans(w.root),/x-indexed is only allowed/);
+ } finally {fs.rmSync(w.root,{recursive:true,force:true});}
+});
+
+
+test('optional root purpose has no default and never opts into indexing',async()=>{
+ const w=workspace();
+ try {
+  for(const type of [undefined,null,'','   ']) {
+   w.write('components/Schemas/master.json',{...w.master,type,attributes:{type:'master',schema:{type:'object'}}});
+   assert.deepEqual(await loadPlans(w.root),[]);
+   w.write('components/Schemas/master.json',{...w.master,type});
+   await assert.rejects(loadPlans(w.root),/x-indexed is only allowed/);
+  }
+ } finally {fs.rmSync(w.root,{recursive:true,force:true});}
 });

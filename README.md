@@ -171,6 +171,74 @@ wf reset
 
 All workspace commands (`check`, `csx`, `sync`, `update`, `reset`) accept the global `--domain <name>` option. Without it they run once per solution file found in the project root.
 
+### `wf indexes generate`
+
+**Purpose**: Generate offline attribute-index SQL for planned execution by your DBA team.
+
+From a domain workspace containing `vnext.config.json`:
+
+```bash
+wf indexes generate --output ./index-sql
+wf indexes generate --flow money-transfer --output ./index-sql
+```
+
+Each invocation writes a **new batch folder** containing one `.sql` per workflow, a `manifest.json`
+(source paths, versions, SHA-256 checksums, physical index definitions), and execution notes. Earlier
+batches are preserved. The command never connects to API/DB and never executes SQL; `sync`, `update`
+and Master publication do not invoke it.
+
+The generator resolves local workflow → Master references from the configured component directories.
+All local versions of a workflow contribute requirements. Full `-pkg.` revisions remain pinned; `latest`,
+artifact, minor and major selectors use runtime version ordering. Build metadata is ignored. Referenced
+schemas must exist locally; incomplete references, duplicate versions and incompatible types fail.
+
+Indexed fields use `x-indexed: true`. Nested scalar string/number/integer/boolean fields are supported;
+dates use `format: "date-time"`. Filtering/sorting permissions remain `x-filterOperators`/`x-sortable`.
+The generator preserves the runtime `v1:latest` column/key contract; readable index names include a hash
+of their physical definition.
+
+The DBA reviews and executes each SQL file in a maintenance window:
+
+```bash
+psql -X -v ON_ERROR_STOP=1 --dbname=vNext_MyDomainDb --file=index-sql/<batch>/money_transfer.sql
+```
+
+SQL takes an advisory lock plus an **ACCESS EXCLUSIVE table lock**.
+It validates current/history data, adds stored generated columns in one table rewrite, reuses structurally
+matching indexes (including legacy names), rebuilds changed owned indexes, and updates the runtime ready
+catalog atomically. Index comparison covers keys, includes, ordering, collation, access method, operator
+classes and partial predicates. Unmanaged collisions abort; no `CASCADE` is issued. Replaying an unchanged
+batch preserves index OIDs and skips data validation, rewrites and ANALYZE. Missing/invalid values are not
+silently coerced; conversion errors identify the field and roll back all changes.
+
+This is **not concurrent DDL**. Plan disk/WAL/replica capacity for generated-column rewrites; the script's
+5-second lock timeout may be adjusted during DBA review. Text-search indexes require `pg_trgm` in `public`
+and `tr-TR-x-icu`. Runtime routing uses `AttributeIndexes:Enabled`; catalog refresh defaults to 30 seconds.
+
+Obsolete projections are retained by default for other deployed versions. To explicitly retire them:
+
+```bash
+wf indexes generate --flow money-transfer --retire-obsolete
+```
+
+Include **every still-active workflow version** locally and drain readers/writers for this maintenance.
+Retirement removes obsolete expressions/owned indexes and marks catalog entries not ready; columns and
+stored values remain. This is required when an old numeric/date cast would reject values after a type
+change. The offline tool cannot verify deployed versions: compare the source manifest before execution.
+Roll back query routing through the runtime's `AttributeIndexes:DisabledFlows`; schedule physical cleanup
+separately. See the runtime [maintenance runbook](https://github.com/burgan-tech/vnext/blob/main/docs/runtime/manual-attribute-index-maintenance.md).
+
+**Tests (Node 18+ test runner):**
+
+```bash
+node --test test/indexes.test.js
+# Use only a disposable PostgreSQL database; the test owns uniquely named fixture schemas.
+VNEXT_INDEX_TEST_URL=postgresql://user:password@localhost:5432/disposable_test \
+  node --test test/indexes.postgres.test.js
+```
+
+---
+
 ### `wf check`
 
 **Purpose**: System health check

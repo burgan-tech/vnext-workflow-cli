@@ -13,7 +13,7 @@ function workspace() {
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'vnext-indexes-'));
  const write=(file, data)=>{ const target=path.join(root,file);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,JSON.stringify(data)); };
  write('vnext.config.json',{domain:'test', paths:{componentsRoot:'components',workflows:'Workflows',schemas:'Schemas'}});
- const master={type:'master',key:'master',version:'1.0.0',domain:'test',flow:'sys-schemas',attributes:{type:'workflow',schema:{type:'object',properties:{amount:{type:'number','x-indexed':true,'x-filterOperators':['gt']}}}}};
+ const master={key:'master',version:'1.0.0',domain:'test',flow:'sys-schemas',attributes:{type:'master',schema:{type:'object',properties:{amount:{type:'number','x-indexed':true,'x-filterOperators':['gt']}}}}};
  const flow={key:'orders',version:'1.0.0',domain:'test',flow:'sys-flows',attributes:{schema:{key:'master',domain:'test',flow:'sys-schemas',version:'latest'}}};
  write('components/Schemas/master.json',master);write('components/Workflows/orders.json',flow);
  return {root,write,master,flow};
@@ -69,7 +69,7 @@ test('generation is offline, immutable, scoped, and writes manifests matching SQ
 test('all local workflow versions are merged; duplicate identities and schema collisions fail',async()=>{
  const w=workspace();
  try {
-  w.write('components/Schemas/master2.json',{...w.master,version:'2.0.0',attributes:{schema:{properties:{name:{type:'string','x-indexed':true}}}}});
+  w.write('components/Schemas/master2.json',{...w.master,version:'2.0.0',attributes:{type:'master',schema:{properties:{name:{type:'string','x-indexed':true}}}}});
   w.write('components/Workflows/orders.json',{...w.flow,attributes:{schema:{...w.flow.attributes.schema,version:'1.0.0'}}});
   w.write('components/Workflows/orders2.json',{...w.flow,version:'2.0.0'});
   assert.deepEqual((await loadPlans(w.root))[0].projections.map(p=>p.path),['amount','amount','name']);
@@ -104,63 +104,49 @@ test('conditional indexed nodes and ancestors are rejected without rejecting unr
 });
 
 
-test('only referenced master schemas produce SQL plans; skip non-master latest versions without falling back',async()=>{
+test('only referenced master schemas produce SQL plans; skip non-master latest without fallback',async()=>{
  const w=workspace();
  try {
-  for(const type of ['transition','view','function']) {
-   w.write('components/Schemas/master.json',{...w.master,type,attributes:{schema:{type:'object',properties:{name:{type:'string'}}}}});
+  for(const type of ['transition','view','function','workflow','task','headers','json-schema','custom-schema','MASTER']) {
+   w.write('components/Schemas/master.json',{...w.master,attributes:{type,schema:{type:'object'}}});
    assert.deepEqual(await loadPlans(w.root),[]);
-   await assert.rejects(generate({output:'ignored-output'},w.root),/No workflows referencing type: master/);
+   await assert.rejects(generate({output:'ignored-output'},w.root),/No workflows referencing attributes.type: master/);
    assert.equal(fs.existsSync(path.join(w.root,'ignored-output')),false);
   }
   w.write('components/Schemas/master.json',w.master);
-  w.write('components/Schemas/next.json',{...w.master,version:'2.0.0',type:'transition',attributes:{schema:{type:'object'}}});
+  w.write('components/Schemas/next.json',{...w.master,version:'2.0.0',attributes:{type:'custom-schema',schema:{type:'object'}}});
   assert.deepEqual(await loadPlans(w.root),[]);
   w.write('components/Workflows/orders.json',{...w.flow,attributes:{schema:{...w.flow.attributes.schema,version:'1.0.0'}}});
   assert.equal((await loadPlans(w.root)).length,1);
  } finally {fs.rmSync(w.root,{recursive:true,force:true});}
 });
 
-test('non-master x-indexed metadata and invalid schema purposes fail validation',async()=>{
+test('only exact attributes.type master allows x-indexed including false',async()=>{
  const w=workspace();
  try {
-  for(const type of ['transition','view','function']) {
+  for(const type of ['transition','view','function','custom-schema','MASTER',undefined,null,'','   ']) {
    for(const indexed of [true,false]) {
-    w.write('components/Schemas/master.json',{...w.master,type,attributes:{schema:{properties:{nested:{properties:{value:{type:'number','x-indexed':indexed}}}}}}});
-    await assert.rejects(loadPlans(w.root),/x-indexed is only allowed.*master/);
+    w.write('components/Schemas/master.json',{...w.master,type:'master',attributes:{type,schema:{properties:{nested:{properties:{value:{type:'number','x-indexed':indexed}}}}}}});
+    await assert.rejects(loadPlans(w.root),/x-indexed is only allowed when attributes.type is 'master'/);
    }
   }
-  for(const type of ['workflow','json-schema','MASTER',42,{},[]]) {
-   w.write('components/Schemas/master.json',{...w.master,type,attributes:{schema:{type:'object'}}});
-   await assert.rejects(loadPlans(w.root),/Schema type must be one of/);
+  for(const type of [42,{},[]]) {
+   w.write('components/Schemas/master.json',{...w.master,attributes:{type,schema:{type:'object'}}});
+   await assert.rejects(loadPlans(w.root),/attributes.type must be a string/);
   }
  } finally {fs.rmSync(w.root,{recursive:true,force:true});}
 });
 
-
-test('root type controls indexing while existing attributes.type remains independent',async()=>{
+test('root type is ignored and missing attributes.type never defaults to master',async()=>{
  const w=workspace();
  try {
-  for(const attributeType of ['workflow','task','function','view','schema','extension','headers','json-schema']) {
-   w.write('components/Schemas/master.json',{...w.master,attributes:{...w.master.attributes,type:attributeType}});
+  for(const type of ['view','custom',undefined,null]) {
+   w.write('components/Schemas/master.json',{...w.master,type});
    assert.equal((await loadPlans(w.root)).length,1);
   }
-  w.write('components/Schemas/master.json',{...w.master,type:'view',attributes:{type:'master',schema:{type:'object'}}});
-  assert.deepEqual(await loadPlans(w.root),[]);
-  w.write('components/Schemas/master.json',{...w.master,type:undefined,attributes:{...w.master.attributes,type:'master'}});
-  await assert.rejects(loadPlans(w.root),/x-indexed is only allowed/);
- } finally {fs.rmSync(w.root,{recursive:true,force:true});}
-});
-
-
-test('optional root purpose has no default and never opts into indexing',async()=>{
- const w=workspace();
- try {
   for(const type of [undefined,null,'','   ']) {
-   w.write('components/Schemas/master.json',{...w.master,type,attributes:{type:'master',schema:{type:'object'}}});
+   w.write('components/Schemas/master.json',{...w.master,type:'master',attributes:{type,schema:{type:'object'}}});
    assert.deepEqual(await loadPlans(w.root),[]);
-   w.write('components/Schemas/master.json',{...w.master,type});
-   await assert.rejects(loadPlans(w.root),/x-indexed is only allowed/);
   }
  } finally {fs.rmSync(w.root,{recursive:true,force:true});}
 });

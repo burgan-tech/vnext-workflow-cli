@@ -6,7 +6,7 @@ const { generateSql, indexes } = require('../lib/indexes/sql');
 
 async function generate(options, projectRoot = process.cwd()) {
   const plans = await loadPlans(projectRoot, options.flow);
-  if (!plans.length) throw new Error("No workflows referencing type: master schemas found; no SQL files generated.");
+  if (!plans.length) throw new Error("No workflows referencing attributes.type: master schemas found; no SQL files generated.");
   // Validate/render the whole batch before creating any output; never overwrite an earlier batch.
   const rendered = plans.map(plan => ({ plan, sql: generateSql(plan, options) }));
   const output = path.resolve(projectRoot, options.output || 'index-sql');

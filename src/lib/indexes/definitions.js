@@ -29,7 +29,7 @@ function fieldsFromSchema(root, schemaType) {
     if (!node || typeof node !== 'object') return;
     supported = supported && !['$ref', 'allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else', 'dependentSchemas'].some(key => key in node);
     if ('x-indexed' in node && schemaType !== 'master')
-      throw new Error(`Field '${fieldPath}': x-indexed is only allowed when root.type is 'master'.`);
+      throw new Error(`Field '${fieldPath}': x-indexed is only allowed when attributes.type is 'master'.`);
     if ('x-indexed' in node && typeof node['x-indexed'] !== 'boolean')
       throw new Error(`Field '${fieldPath}': x-indexed must be boolean.`);
     if (node['x-indexed'] === true) {
@@ -95,10 +95,9 @@ async function loadPlans(projectRoot, flow) {
       const data = JSON.parse(fs.readFileSync(file, 'utf8'));
       if (data.flow !== type || !data.key || !data.domain) throw new Error(`Invalid ${type} component: ${file}`);
       if (type === 'sys-schemas') {
-        const schemaType = data.type;
-        if (schemaType != null && !(typeof schemaType === 'string' && schemaType.trim() === '') &&
-          !['master', 'transition', 'view', 'function'].includes(schemaType))
-          throw new Error(`Schema type must be one of: master, transition, view, function (${file}).`);
+        const schemaType = data.attributes && data.attributes.type;
+        if (schemaType != null && typeof schemaType !== 'string')
+          throw new Error(`Schema attributes.type must be a string (${file}).`);
         if (schemaType !== 'master') fieldsFromSchema(data.attributes && data.attributes.schema, schemaType);
       }
       const version = parseVersion(data.version);
@@ -133,10 +132,10 @@ async function loadPlans(projectRoot, flow) {
       sources.set(w.source, { file: w.source, sha256: w.digest, key: w.key, version: w.version });
       if (!w.attributes || !w.attributes.schema) continue;
       const master = resolveMaster(schemas, w.attributes.schema, config.domain);
-      if (master.type !== 'master') continue;
+      if (!master.attributes || master.attributes.type !== 'master') continue;
       hasMaster = true;
       if (!master.attributes || !master.attributes.schema) throw new Error(`Master JSON schema is missing in ${master.source}`);
-      fields.push(...fieldsFromSchema(master.attributes.schema, master.type));
+      fields.push(...fieldsFromSchema(master.attributes.schema, master.attributes.type));
       sources.set(master.source, { file: master.source, sha256: master.digest, key: master.key, version: master.version });
     }
     if (!hasMaster) return null;

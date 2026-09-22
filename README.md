@@ -198,13 +198,46 @@ wf check --domain partner  # one solution
    - Checks if it exists in DB (by key)
    - If **exists** → Skip (already synced)
    - If **not exists** → Publish to API
-3. Re-initializes the system
+3. Signals `definitions/publish/completed` once — the runtime's post-deployment hook
 
 **Use when**: Initial setup, adding new components without affecting existing ones
 
 ```bash
 wf sync
 ```
+
+---
+
+### Publish-completed
+
+`sync`, `update` and `reset` each end with one call to the runtime:
+
+```
+POST {baseUrl}/api/{version}/definitions/publish/completed
+```
+
+It runs the runtime's post-deployment hooks once per command. Today that means forcing a re-read of
+the domain discovery registry — and that matters more than it looks: the runtime's discovery endpoint
+cache carries **no TTL**, so this call is its only automatic invalidation. Without it a runtime keeps
+resolving cross-domain calls by whatever it learned at startup, until its pod restarts.
+
+The response is always HTTP 200; a failed hook is reported in the body, and the CLI prints each
+hook's outcome:
+
+```
+✔ Publish-completed ran 1 hook(s)
+    discovery-cache: Refreshed
+```
+
+`Refreshed` is the normal outcome. `SkippedNotOwner` is also fine — another replica is reading the
+registry and its result applies cluster-wide. `Disabled` means that runtime has no discovery cache
+(`ServiceDiscovery:Provider=dapr`, or the cache switched off). `Failed` means the registry could not
+be read and nothing else will retry it.
+
+> **Requires a runtime that exposes `definitions/publish/completed`.** It replaces
+> `definitions/re-initialize`, which older runtimes served as a no-op and current ones have removed.
+> Against an older runtime this call 404s and the CLI prints the warning above without failing the
+> command.
 
 ---
 
@@ -218,7 +251,7 @@ wf sync
    - Checks if it exists in DB (by key)
    - If **exists** → Delete from DB, then publish to API
    - If **not exists** → Publish to API
-3. Re-initializes the system
+3. Signals `definitions/publish/completed` once — the runtime's post-deployment hook
 
 **Use when**: You modified existing components and want to update them
 
@@ -255,7 +288,7 @@ wf update -d Workflows/person      # Only Workflows/person
    - Checks if it exists in DB (by key)
    - If **exists** → Delete from DB, then publish to API
    - If **not exists** → Publish to API
-3. Re-initializes the system
+3. Signals `definitions/publish/completed` once — the runtime's post-deployment hook
 
 **Use when**: You need to force reset components regardless of changes
 
@@ -782,7 +815,7 @@ vnext-workflow-cli/
 │   │   ├── sync.js
 │   │   └── update.js
 │   └── lib/                 # Library modules
-│       ├── api.js           # API client (publish, reinitialize)
+│       ├── api.js           # API client (publish, publish-completed)
 │       ├── config.js        # CLI configuration
 │       ├── csx.js           # CSX processing
 │       ├── db.js            # Database operations

@@ -7,7 +7,7 @@ const { buildDbConfig, buildApiConfig } = require('../lib/config');
 const { discoverComponents, toGlobPattern, JSON_IGNORE_PATTERNS } = require('../lib/discover');
 const { loadWorkspace, runForEachSolution } = require('../lib/solutions');
 const { getJsonMetadata, findAllJson, detectComponentType, checkComponentDomain } = require('../lib/workflow');
-const { publishComponent, reinitializeSystem } = require('../lib/api');
+const { publishComponent, publishCompleted } = require('../lib/api');
 const { getInstanceId, deleteWorkflow } = require('../lib/db');
 const { LOG, printApiError, printErrorSummaryTable } = require('../lib/ui');
 
@@ -189,18 +189,26 @@ async function resetSolution(solution) {
     }
   }
 
-  // Re-initialize
+  // Post-deployment hook. One call per command, after the publish loop: the runtime's discovery
+  // endpoint cache has no TTL, so this is its only automatic invalidation.
   const totalSuccess = Object.values(componentStats).reduce((sum, s) => sum + s.success, 0);
 
   if (totalSuccess > 0) {
     console.log();
-    const reinitSpinner = ora('  Re-initializing system...').start();
-    const reinitSuccess = await reinitializeSystem(apiConfig.baseUrl, apiConfig.version);
+    const hookSpinner = ora('Signalling publish-completed...').start();
+    const hookResult = await publishCompleted(apiConfig.baseUrl, apiConfig.version);
 
-    if (reinitSuccess) {
-      reinitSpinner.succeed(chalk.green('  System re-initialized'));
+    if (hookResult.success) {
+      hookSpinner.succeed(chalk.green(`Publish-completed ran ${hookResult.hooks.length} hook(s)`));
     } else {
-      reinitSpinner.warn(chalk.yellow('  System re-initialization failed (continuing)'));
+      hookSpinner.warn(chalk.yellow(`Publish-completed reported a problem: ${hookResult.error} (continuing)`));
+    }
+
+    // Printed per hook rather than summarised: a hook that did not run means cross-domain
+    // endpoints stay as they were until the next deployment, and nothing else will say so.
+    for (const hook of hookResult.hooks) {
+      const line = `${hook.name}: ${hook.outcome}${hook.message ? ` - ${hook.message}` : ''}`;
+      console.log(hook.outcome === 'Failed' ? chalk.yellow(`    ${line}`) : chalk.dim(`    ${line}`));
     }
   }
 

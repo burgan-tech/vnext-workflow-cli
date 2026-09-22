@@ -94,23 +94,47 @@ async function publishComponent(baseUrl, componentData) {
 }
 
 /**
- * Reinitializes the system
+ * Signals the runtime that this deployment has finished publishing every component, and returns what
+ * its post-deployment hooks did.
+ *
+ * Called ONCE per command, after the publish loop. Replaces the former
+ * `definitions/re-initialize`, which the runtime had reduced to a no-op and has now removed.
+ *
+ * This is not cosmetic: the runtime's discovery endpoint cache has no TTL, so this call is its only
+ * automatic invalidation. A sync that does not make it leaves the runtime resolving cross-domain
+ * calls by whatever it learned at startup.
+ *
+ * The status code is always 200 — a failed hook is reported in the body — so `success` is read from
+ * there and the per-hook outcomes are returned for printing.
+ *
  * @param {string} baseUrl - API base URL
  * @param {string} version - API version
- * @returns {Promise<boolean>} Success status
+ * @param {{ packageName?: string, version?: string, domain?: string }} [details] - identification for the runtime's logs
+ * @returns {Promise<{success: boolean, hooks: Array<{name: string, outcome: string, message?: string}>, error: string|null}>}
  */
-async function reinitializeSystem(baseUrl, version) {
-  const url = `${baseUrl}/api/${version}/definitions/re-initialize`;
+async function publishCompleted(baseUrl, version, details = {}) {
+  const url = `${baseUrl}/api/${version}/definitions/publish/completed`;
   try {
-    await apiClient.get(url, { timeout: 10000 });
-    return true;
+    const response = await apiClient.post(url, details, { timeout: 30000 });
+    const body = response.data ?? {};
+    const hooks = Array.isArray(body.hooks) ? body.hooks : [];
+
+    return {
+      success: body.success !== false,
+      hooks,
+      error: body.success === false ? 'one or more hooks failed' : null
+    };
   } catch (error) {
-    return false;
+    return {
+      success: false,
+      hooks: [],
+      error: error.response ? `HTTP ${error.response.status}` : error.message
+    };
   }
 }
 
 module.exports = {
   testApiConnection,
   publishComponent,
-  reinitializeSystem
+  publishCompleted
 };

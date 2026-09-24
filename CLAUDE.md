@@ -17,7 +17,7 @@ node bin/workflow.js   # run the CLI directly (same as `npm run dev` / `npm star
 ```
 
 - **`build` is a no-op** (`echo 'Build not needed for now'`) — nothing to compile.
-- **There is no test suite, linter, or formatter configured.** Do not invent `npm test`/`npm run lint` commands; they will fail. Verify changes by running the CLI against a real vNext project directory.
+- **Index SQL tests**: `node --test test/indexes.test.js` (Node 18+); real PostgreSQL tests use `VNEXT_INDEX_TEST_URL=... node --test test/indexes.postgres.test.js` against a disposable database. No npm test/lint script is configured. Also verify the CLI against a real vNext project directory.
 
 The CLI always treats `process.cwd()` as the project root and requires at least one solution file (`vnext.config.json` or `vnext.{domain}.config.json`) in that directory. To exercise it, `cd` into a vNext workspace (not this repo) before running. A two-solution testbed lives at `../vnext-example` (`core` + `partner`); copy it into a scratch directory before running write-mode commands against it.
 
@@ -63,3 +63,13 @@ Every workspace command runs the table above **once per solution, sequentially**
 - Library functions (`discover.js`, `workflow.js`, `csx.js`) take a **solution object** (`projectRoot`, `componentsRoot`, `componentTypes`, …) rather than a bare `projectRoot` or reading cwd directly; commands receive it from `runForEachSolution`. Only `config.get('PROJECT_ROOT')` (inside `solutions.loadWorkspace`) reads cwd.
 - Commands are split into a thin `xxxCommand(options)` (header, prompts that must happen once, then `runForEachSolution`) and an `xxxSolution(solution, options)` body that returns `{ success, failed, errors }` so the workspace summary can aggregate.
 - DB and API helpers swallow connection errors and return `false`/`null` rather than throwing — callers treat a missing instance as "not in DB".
+
+## Manual attribute-index SQL
+
+`wf indexes generate` is strictly offline: `src/lib/indexes/` resolves local Master
+references and emits SQL; `src/commands/indexes.js` writes immutable batches. Never add DB execution
+or automatic sync/publish hooks. DBA execution owns the maintenance window. Keep physical keys/columns
+compatible with runtime `AttributeIndexDefinition` (`v1:latest` SHA-256 first 24 hex); version matching
+follows runtime `InstanceDataVersionComparer`, including package revisions. SQL compares actual index
+structure, skips equivalent indexes and only rebuilds/removes owned indexes. Projection retirement
+requires explicit `--retire-obsolete` and a complete local inventory of active workflow versions.

@@ -82,6 +82,15 @@ program
   .description('Reset workflows (force update)')
   .action(resetCommand);
 
+// Offline index maintenance artifacts; execution is owned by the DBA team.
+program.command('indexes').description('Generate DBA-reviewed attribute index SQL')
+  .command('generate')
+  .description('Read local workflow/Master definitions and write SQL files without contacting API/DB')
+  .option('--flow <key>', 'Generate for one workflow key (all its local versions)')
+  .option('-o, --output <directory>', 'Parent folder for a new immutable SQL batch', 'index-sql')
+  .option('--retire-obsolete', 'Retire obsolete projections; requires ALL active workflow versions locally')
+  .action(require('../src/commands/indexes'));
+
 // Config command
 program
   .command('config')

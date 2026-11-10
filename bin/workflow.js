@@ -11,6 +11,7 @@ const syncCommand = require('../src/commands/sync');
 const resetCommand = require('../src/commands/reset');
 const configCommand = require('../src/commands/config');
 const domainCommand = require('../src/commands/domain');
+const { agentDryRunCommand } = require('../src/commands/agent');
 
 program
   .name('workflow')
@@ -90,6 +91,29 @@ program.command('indexes').description('Generate DBA-reviewed attribute index SQ
   .option('-o, --output <directory>', 'Parent folder for a new immutable SQL batch', 'index-sql')
   .option('--retire-obsolete', 'Retire obsolete projections; requires ALL active workflow versions locally')
   .action(require('../src/commands/indexes'));
+
+// Agent commands
+program
+  .command('agent')
+  .description('AI agent (sys-agents) tools')
+  .command('dry-run')
+  .description('Run an agent once on the runtime against sample data, without an instance')
+  .argument('<key>', 'Agent key')
+  .requiredOption('--data <file>', 'JSON file with the sample instance data')
+  .option('--prompt <text>', 'User prompt; may use {{ data.* }}')
+  .option('--prompt-file <file>', 'Read the user prompt from a file')
+  .option('--candidates <file>', 'JSON file with decision candidates [{ key, when, whenSource }]')
+  .option('--agent-version <version>', 'Agent version (default: latest)')
+  .option('--role <role>', 'Caller role, sent as the "role" header (must be in AiAgent:DryRun:Roles)')
+  .option('--json', 'Print the raw response JSON')
+  .addHelpText('after', `
+Uses the CLI profile of --domain, or the active domain.
+
+Examples:
+  wf agent dry-run ai-triage-agent --data sample.json --prompt "<message>{{ data.message }}</message>" --role admin
+  wf agent dry-run ai-triage-agent --data sample.json --prompt-file prompt.txt --candidates candidates.json --domain core
+`)
+  .action(agentDryRunCommand);
 
 // Config command
 program

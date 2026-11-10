@@ -391,6 +391,28 @@ In a workspace with several solution files, `wf reset` first asks **which domain
 
 ---
 
+### `wf agent dry-run <key>`
+
+**Purpose**: Run an AI agent (`sys-agents`) once on the runtime against sample data, without an instance — no journal, no session, no data write; every tool answers a stub. Wraps `POST api/{API_VERSION}/{domain}/definitions/agents/{key}/dry-run`.
+
+```bash
+wf agent dry-run ai-triage-agent --data sample.json --prompt "<message>{{ data.message }}</message>" --role admin
+wf agent dry-run ai-triage-agent --data sample.json --prompt-file prompt.txt --candidates candidates.json --domain core
+```
+
+| Option | Description |
+|--------|-------------|
+| `--data <file>` | *(required)* JSON object with the sample instance data |
+| `--prompt <text>` / `--prompt-file <file>` | User prompt; may use `{{ data.* }}` |
+| `--candidates <file>` | JSON array of decision candidates `{ key, when, whenSource }`; without it the agent runs without a decision |
+| `--agent-version <version>` | Agent version (default: latest). Not `--version`, which prints the CLI version |
+| `--role <role>` | Caller role, sent as the `role` header |
+| `--json` | Print the raw response JSON |
+
+Uses the CLI profile of `--domain`, or the active domain. Prints status, decision, output, tool calls and token usage; on failure prints the runtime's error (HTTP status, detail, error code, trace id) and exits with code 1. The runtime allows dry-runs only for the caller roles in `AiAgent:DryRun:Roles`; with that list empty every call returns `403 forbidden.Agent:100004`.
+
+---
+
 ### `wf csx [options]`
 
 **Purpose**: Convert CSX files to Base64 and embed in JSON files

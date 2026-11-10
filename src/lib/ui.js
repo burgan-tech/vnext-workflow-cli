@@ -188,9 +188,53 @@ function printSolutionBanner(solution) {
   console.log(chalk.cyan(`  └${'─'.repeat(innerWidth)}┘`));
 }
 
+/**
+ * Prints the result of an agent dry-run (AgentDryRunOutput).
+ * @param {Object} output - 200 response body
+ */
+function printAgentDryRunResult(output) {
+  const o = output || {};
+  const status = String(o.status ?? 'Unknown');
+  const ok = /^(completed|succeeded|success)$/i.test(status);
+  const row = (label, value) => console.log(`  ${chalk.white(label.padEnd(12))} ${value}`);
+
+  console.log();
+  row('Status', ok ? chalk.green(status) : chalk.yellow(status));
+  if (o.decision) row('Decision', chalk.cyan(o.decision));
+  if (o.reason) row('Reason', o.reason);
+  if (o.failureReason) row('Failure', chalk.red(o.failureReason));
+
+  console.log(chalk.white.bold('\n  Output:'));
+  if (o.output === null || o.output === undefined) {
+    console.log(chalk.dim('    (none)'));
+  } else {
+    const text = typeof o.output === 'string' ? o.output : JSON.stringify(o.output, null, 2);
+    for (const line of text.split('\n')) console.log(`    ${line}`);
+  }
+
+  const calls = Array.isArray(o.toolCalls) ? o.toolCalls : [];
+  console.log(chalk.white.bold(`\n  Tool calls (${calls.length}):`));
+  if (calls.length === 0) {
+    console.log(chalk.dim('    (none)'));
+  }
+  calls.forEach((call, index) => {
+    const failed = !!call.error;
+    const mark = failed ? chalk.red('✗') : chalk.green('✓');
+    const meta = [call.kind !== undefined ? `kind ${call.kind}` : null, call.status !== undefined ? String(call.status) : null, call.durationMs !== undefined ? `${call.durationMs} ms` : null]
+      .filter(Boolean).join(', ');
+    console.log(`    ${mark} ${index + 1}. ${chalk.white(call.name || call.callId || '?')} ${chalk.dim(meta ? `(${meta})` : '')}`);
+    if (call.bindingRef) console.log(chalk.dim(`         → ${call.bindingRef}`));
+    if (failed) console.log(chalk.red(`         ${call.error}`));
+  });
+
+  console.log();
+  console.log(chalk.dim(`  Tokens: ${o.promptTokens ?? 0} prompt, ${o.completionTokens ?? 0} completion · ${o.durationMs ?? 0} ms`));
+}
+
 module.exports = {
   LOG,
   printApiError,
   printErrorSummaryTable,
-  printSolutionBanner
+  printSolutionBanner,
+  printAgentDryRunResult
 };

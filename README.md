@@ -72,7 +72,8 @@ Every vNext workspace must have at least one **solution file** in the **project 
     "extensions": "Extensions",
     "workflows": "Workflows",
     "schemas": "Schemas",
-    "mappings": "Mappings"
+    "mappings": "Mappings",
+    "agents": "Agents"
   }
 }
 ```
@@ -90,6 +91,11 @@ Every vNext workspace must have at least one **solution file** in the **project 
 | `paths.functions` | Functions folder name under componentsRoot |
 | `paths.extensions` | Extensions folder name under componentsRoot |
 | `paths.mappings` | Mappings folder name under componentsRoot |
+| `paths.agents` | *(optional)* AI agent folder name under componentsRoot (component flow `sys-agents`). Without it the CLI behaves exactly as before |
+
+### Publish Order
+
+Folders are published in the order their keys appear under `paths`, with one exception: **agents are always published before workflows**, because an `AiAgent` state references its agent. If `paths.agents` comes after `paths.workflows`, the agents folder is moved right before the workflows folder; nothing else moves. `wf update` (git-changed files, `--folder`, `--all`) and `wf reset` apply the same rule to their file lists.
 
 ### Component Discovery
 
@@ -248,6 +254,7 @@ For every solution, checks and displays:
 - API connection status (skipped with a `wf domain add` hint when the domain has no CLI profile)
 - Database connection status
 - Component folders found
+- Agent files, when `paths.agents` is declared: JSON syntax and the component header (`key`, `version`, `flow` = `sys-agents`, `domain` = the solution domain), plus the `agent-definition` schema when the project's installed `@burgan-tech/vnext-schema` exports it. With an older package the schema step is skipped with a notice and the other checks still run. The CLI does not bundle the schema: install or upgrade `@burgan-tech/vnext-schema` in the project.
 
 ```bash
 wf check                   # every solution in the workspace
@@ -377,6 +384,7 @@ In a workspace with several solution files, `wf reset` first asks **which domain
   workflows (Workflows/)
   schemas (Schemas/)
   mappings (Mappings/)
+  agents (Agents/)       # only when paths.agents is declared
   ──────────────
   TUMU (All folders)
 ```

@@ -6,7 +6,7 @@ const { glob } = require('glob');
 const { buildDbConfig, buildApiConfig } = require('../lib/config');
 const { discoverComponents, toGlobPattern, JSON_IGNORE_PATTERNS } = require('../lib/discover');
 const { loadWorkspace, runForEachSolution } = require('../lib/solutions');
-const { getJsonMetadata, findAllJson, detectComponentType, checkComponentDomain } = require('../lib/workflow');
+const { getJsonMetadata, findAllJson, detectComponentType, sortForPublish, checkComponentDomain } = require('../lib/workflow');
 const { publishComponent, publishCompleted } = require('../lib/api');
 const { getInstanceId, deleteWorkflow } = require('../lib/db');
 const { LOG, printApiError, printErrorSummaryTable } = require('../lib/ui');
@@ -99,6 +99,9 @@ async function resetSolution(solution) {
       fileName: path.basename(f)
     }));
   }
+
+  // Workflows reference agents: publish agent files before workflow files
+  jsonFiles = sortForPublish(jsonFiles);
 
   if (jsonFiles.length === 0) {
     LOG.warning('No JSON files found');

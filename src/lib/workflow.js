@@ -62,6 +62,7 @@ function detectComponentType(jsonPath, solution) {
         case 'functions': return 'sys-functions';
         case 'extensions': return 'sys-extensions';
         case 'mappings': return 'sys-mappings';
+        case 'agents': return 'sys-agents';
         default: return `sys-${type.toLowerCase()}`;
       }
     }
@@ -75,8 +76,33 @@ function detectComponentType(jsonPath, solution) {
   if (pathLower.includes('/functions/')) return 'sys-functions';
   if (pathLower.includes('/extensions/')) return 'sys-extensions';
   if (pathLower.includes('/mappings/')) return 'sys-mappings';
+  if (pathLower.includes('/agents/')) return 'sys-agents';
 
   return 'sys-flows'; // default
+}
+
+/**
+ * Puts a list of component files in publish order: an agent file
+ * (`sys-agents`) that comes after the first workflow file (`sys-flows`) is
+ * moved right before it, because workflows reference agents. Every other file
+ * keeps its position, so a list without agent files is returned unchanged.
+ * @param {Object[]} jsonFiles - Items with a `type` holding the component flow (see detectComponentType)
+ * @returns {Object[]} The same items, in publish order
+ */
+function sortForPublish(jsonFiles) {
+  const firstWorkflow = jsonFiles.findIndex(file => file.type === 'sys-flows');
+  if (firstWorkflow === -1) {
+    return jsonFiles;
+  }
+
+  const before = jsonFiles.slice(0, firstWorkflow);
+  const after = jsonFiles.slice(firstWorkflow);
+  const lateAgents = after.filter(file => file.type === 'sys-agents');
+  if (lateAgents.length === 0) {
+    return jsonFiles;
+  }
+
+  return [...before, ...lateAgents, ...after.filter(file => file.type !== 'sys-agents')];
 }
 
 /**
@@ -169,6 +195,7 @@ module.exports = {
   getJsonMetadata,
   checkComponentDomain,
   detectComponentType,
+  sortForPublish,
   getGitChangedJson,
   findAllJsonInComponent,
   findAllJson

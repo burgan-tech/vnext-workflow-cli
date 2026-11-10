@@ -15,7 +15,7 @@ const {
 const { loadWorkspace, runForEachSolution } = require('../lib/solutions');
 const { publishComponent, publishCompleted } = require('../lib/api');
 const { getInstanceId, deleteWorkflow } = require('../lib/db');
-const { getJsonMetadata, getGitChangedJson, findAllJson, detectComponentType, checkComponentDomain } = require('../lib/workflow');
+const { getJsonMetadata, getGitChangedJson, findAllJson, detectComponentType, sortForPublish, checkComponentDomain } = require('../lib/workflow');
 const { processCsxFile, getGitChangedCsx, findAllCsx } = require('../lib/csx');
 const { LOG, printApiError, printErrorSummaryTable } = require('../lib/ui');
 
@@ -218,6 +218,9 @@ async function updateSolution(solution, options) {
 
     spinner.succeed(chalk.green(`${jsonFiles.length} changed JSON files found`));
   }
+
+  // Workflows reference agents: publish agent files before workflow files
+  jsonFiles = sortForPublish(jsonFiles);
 
   // Group by component type
   const componentStats = {};

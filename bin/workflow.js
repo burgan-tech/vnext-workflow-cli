@@ -46,9 +46,15 @@ program
 // CSX command
 program
   .command('csx')
-  .description('Update CSX files')
-  .option('-a, --all', 'Update all CSX files')
-  .option('-f, --file <path>', 'Update a specific CSX file')
+  .description('Update CSX files (and agent instruction .md files) in component JSONs')
+  .option('-a, --all', 'Update all CSX files and agent instruction files')
+  .option('-f, --file <path>', 'Update a specific CSX file, or an agent instructions .md file')
+  .addHelpText('after', `
+Agent instruction files:
+  An agent whose attributes.instructions.location ends in .md gets that file
+  re-inlined into instructions.code (NAT plain, B64/absent base64). Only .md
+  files referenced by agents are read; sync and update do the same before publishing.
+`)
   .action(csxCommand);
 
 // Update command

@@ -429,10 +429,13 @@ Uses the CLI profile of `--domain`, or the active domain. Prints status, decisio
 wf csx                       # Process changed files in Git, every solution
 wf csx --all                 # Process all CSX files
 wf csx --file x.csx          # Process a single file
+wf csx --file instructions/refund.md   # Re-inline one agent instructions file
 wf csx --domain partner      # Only the "partner" solution
 ```
 
 `csx` does not need a CLI domain profile, so it also runs for solutions whose domain has no profile yet.
+
+**Agent instruction files (`.md`)**: an agent (`paths.agents`) may keep its system prompt in a file, `"instructions": { "location": "./instructions/refund.md", "encoding": "B64" }`. `wf csx`, `wf sync` and `wf update` re-inline that file into `instructions.code` before publishing (the runtime reads only `code`), honouring `encoding` (`NAT` plain text, `B64`/absent base64). Only `.md` files an agent references are read — README, CHANGELOG and docs are never touched. The location is relative to the agent JSON and must stay inside `componentsRoot`. The JSON is rewritten only when the text changed; like vnext-forge, CRLF/LF and trailing-newline differences do not count. A referenced file that does not exist fails that agent, which is then not published (`wf check` reports it too). `wf csx --file <path>.md` re-inlines one file into every agent that references it. Summaries show an `MD` line.
 
 ---
 

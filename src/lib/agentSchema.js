@@ -11,6 +11,8 @@ const path = require('path');
  * notice rather than failing, and the header checks still run.
  */
 
+const { inspectInstructions } = require('./agentInstructions');
+
 const SCHEMA_PACKAGE = '@burgan-tech/vnext-schema';
 const AGENT_SCHEMA_TYPE = 'agent';
 const AGENT_FLOW = 'sys-agents';
@@ -141,8 +143,9 @@ function loadAgentValidator(projectRoot, extraPaths) {
 }
 
 /**
- * Checks one agent file: JSON syntax, the component header, and — when a
- * validator is ready — the agent-definition schema.
+ * Checks one agent file: JSON syntax, the component header, a file-backed
+ * instructions `location` (must exist inside the components root), and —
+ * when a validator is ready — the agent-definition schema.
  * @param {string} filePath - Agent JSON file
  * @param {Object} solution - Solution object
  * @param {Object} validator - Result of loadAgentValidator
@@ -164,6 +167,12 @@ function checkAgentFile(filePath, solution, validator) {
   }
   if (data.domain !== solution.domain) {
     problems.push({ path: '/domain', message: `must be the solution domain "${solution.domain}" (found ${JSON.stringify(data.domain)})` });
+  }
+
+  // File-backed instructions: the referenced .md must exist inside the components root
+  const instructions = inspectInstructions(filePath, data, solution);
+  if (instructions.status === 'missing' || instructions.status === 'outside') {
+    problems.push({ path: '/attributes/instructions/location', message: instructions.message });
   }
 
   if (validator && validator.status === 'ready') {

@@ -15,8 +15,16 @@ const {
 const { loadWorkspace, runForEachSolution } = require('../lib/solutions');
 const { publishComponent, publishCompleted } = require('../lib/api');
 const { getInstanceId, deleteWorkflow } = require('../lib/db');
-const { getJsonMetadata, getGitChangedJson, findAllJson, detectComponentType, checkComponentDomain } = require('../lib/workflow');
+const { getJsonMetadata, getGitChangedJson, findAllJson, detectComponentType, sortForPublish, checkComponentDomain } = require('../lib/workflow');
 const { processCsxFile, getGitChangedCsx, findAllCsx } = require('../lib/csx');
+const {
+  findAgentFiles,
+  filterAgentFiles,
+  findAgentFilesInDirs,
+  findAgentsForChangedInstructions,
+  runInstructionSync,
+  formatInstructionSummary
+} = require('../lib/agentInstructions');
 const { LOG, printApiError, printErrorSummaryTable } = require('../lib/ui');
 
 async function updateCommand(options) {
@@ -154,6 +162,29 @@ async function updateSolution(solution, options) {
     }
   }
 
+  // Agent instruction files (.md referenced by agents), same selection as the CSX step
+  let mdAgents = [];
+  if (options.file) {
+    const filePath = path.isAbsolute(options.file) ? options.file : path.join(solution.projectRoot, options.file);
+    mdAgents = filterAgentFiles([filePath]);
+  } else if (useFolder) {
+    mdAgents = await findAgentFilesInDirs(folderDirs);
+  } else if (options.all) {
+    mdAgents = await findAgentFiles(solution);
+  } else {
+    // Agents whose referenced .md changed, plus changed agent JSONs (they are published below)
+    mdAgents = [
+      ...await findAgentsForChangedInstructions(solution),
+      ...filterAgentFiles(await getGitChangedJson(solution))
+    ];
+  }
+
+  let mdResults = runInstructionSync([], solution, LOG);
+  if (mdAgents.length > 0) {
+    console.log(chalk.blue('\n  Writing agent instructions to JSONs...\n'));
+    mdResults = runInstructionSync(mdAgents, solution, LOG);
+  }
+
   let jsonFiles = [];
 
   // Which JSON files to process?
@@ -207,7 +238,11 @@ async function updateSolution(solution, options) {
     if (changedFiles.length === 0) {
       spinner.info(chalk.yellow('No changed JSON files in Git'));
       console.log(chalk.green('\n  ✓ All components up to date\n'));
-      return { success: csxResults.success, failed: csxResults.failed, errors: csxResults.errors.map(e => ({ type: 'CSX', ...e })) };
+      return {
+        success: csxResults.success + mdResults.success,
+        failed: csxResults.failed + mdResults.failed,
+        errors: [...csxResults.errors.map(e => ({ type: 'CSX', ...e })), ...mdResults.errors]
+      };
     }
 
     jsonFiles = changedFiles.map(f => ({
@@ -218,6 +253,9 @@ async function updateSolution(solution, options) {
 
     spinner.succeed(chalk.green(`${jsonFiles.length} changed JSON files found`));
   }
+
+  // Workflows reference agents: publish agent files before workflow files
+  jsonFiles = sortForPublish(jsonFiles);
 
   // Group by component type
   const componentStats = {};
@@ -231,6 +269,13 @@ async function updateSolution(solution, options) {
     // Initialize stats
     if (!componentStats[type]) {
       componentStats[type] = { success: 0, failed: 0, skipped: 0, updated: 0, created: 0 };
+    }
+
+    // An agent whose instructions file is missing would publish stale instructions
+    if (mdResults.blocked.has(path.resolve(jsonPath))) {
+      LOG.component(type, fileName, 'error', 'not published: instructions file missing');
+      componentStats[type].failed++;
+      continue;
     }
 
     try {
@@ -336,10 +381,17 @@ async function updateSolution(solution, options) {
     console.log(`  ${chalk.cyan('CSX'.padEnd(12))} : ${csxSuccessLabel}${csxFailedLabel}`);
   }
 
+  const mdLine = formatInstructionSummary(mdResults, chalk);
+  if (mdLine) {
+    if (csxFiles.length === 0) console.log();
+    console.log(`  ${chalk.cyan('MD'.padEnd(12))} : ${mdLine}`);
+  }
+
   // Errors
   const allErrors = [
     ...errors,
-    ...csxResults.errors.map(e => ({ type: 'CSX', file: e.file, error: e.error }))
+    ...csxResults.errors.map(e => ({ type: 'CSX', file: e.file, error: e.error })),
+    ...mdResults.errors
   ];
   if (allErrors.length > 0) {
     console.log();
@@ -357,7 +409,7 @@ async function updateSolution(solution, options) {
     console.log(chalk.yellow.bold(`\n  ⚠ Update completed (${totalFailed} errors)\n`));
   }
 
-  return { success: totalSuccess + csxResults.success, failed: totalFailed, errors: allErrors };
+  return { success: totalSuccess + csxResults.success + mdResults.success, failed: totalFailed, errors: allErrors };
 }
 
 module.exports = updateCommand;

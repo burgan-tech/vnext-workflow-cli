@@ -25,6 +25,45 @@ const CSX_IGNORE_PATTERNS = [
 ];
 
 /**
+ * `paths` key of the agent component folder (component flow `sys-agents`).
+ * Optional: a solution file without it behaves exactly as before.
+ */
+const AGENT_TYPE = 'agents';
+
+/**
+ * `paths` key of the workflow component folder (component flow `sys-flows`).
+ */
+const WORKFLOW_TYPE = 'workflows';
+
+/**
+ * Returns the discovered folders in publish order. Folders are published in
+ * the order their keys appear under `paths`, with one exception: workflows
+ * reference agents, so the agents folder is moved right before the workflows
+ * folder when the solution file lists it after. Nothing else moves, so a
+ * solution without an agents folder keeps its order unchanged.
+ * @param {Object} discovered - Discovered component folders { type: absoluteDir }
+ * @returns {Object} Same entries, in publish order
+ */
+function orderForPublish(discovered) {
+  const types = Object.keys(discovered);
+  const agentIndex = types.indexOf(AGENT_TYPE);
+  const workflowIndex = types.indexOf(WORKFLOW_TYPE);
+
+  if (agentIndex === -1 || workflowIndex === -1 || agentIndex < workflowIndex) {
+    return discovered;
+  }
+
+  const ordered = types.filter(type => type !== AGENT_TYPE);
+  ordered.splice(ordered.indexOf(WORKFLOW_TYPE), 0, AGENT_TYPE);
+
+  const result = {};
+  for (const type of ordered) {
+    result[type] = discovered[type];
+  }
+  return result;
+}
+
+/**
  * Builds a glob pattern with forward slashes.
  * glob treats backslashes as escape characters, so on Windows a pattern built
  * with path.join (which uses "\") breaks "**" recursion and nested files are
@@ -40,6 +79,7 @@ function toGlobPattern(dir, suffix) {
 /**
  * Discovers component folders of one solution based on its paths.
  * Only scans folders defined in paths, ignores everything else.
+ * The result is in publish order (see orderForPublish).
  * @param {Object} solution - Solution object (see lib/solutions.js)
  * @returns {Object} Discovered component folders { type: absoluteDir }
  */
@@ -57,7 +97,7 @@ async function discoverComponents(solution) {
     }
   }
 
-  return discovered;
+  return orderForPublish(discovered);
 }
 
 /**
@@ -262,9 +302,12 @@ function detectComponentTypeFromPath(filePath, componentTypes) {
 }
 
 module.exports = {
+  AGENT_TYPE,
+  WORKFLOW_TYPE,
   JSON_IGNORE_PATTERNS,
   CSX_IGNORE_PATTERNS,
   toGlobPattern,
+  orderForPublish,
   discoverComponents,
   findJsonInComponent,
   findAllJsonFiles,

@@ -229,13 +229,14 @@ async function processCsxFile(csxPath, solution) {
 }
 
 /**
- * Finds changed CSX files in Git that belong to ONE solution.
+ * Finds changed files with one extension in Git that belong to ONE solution.
  * `git status` runs from the git root (which may be above the project root);
  * results are filtered down to the solution's componentsRoot.
  * @param {Object} solution - Solution object
- * @returns {Promise<string[]>} Changed CSX file paths
+ * @param {string} extension - e.g. ".csx" or ".md"
+ * @returns {Promise<string[]>} Changed file paths
  */
-async function getGitChangedCsx(solution) {
+async function getGitChangedFiles(solution, extension) {
   const { exec } = require('child_process');
   const util = require('util');
   const execPromise = util.promisify(exec);
@@ -252,28 +253,33 @@ async function getGitChangedCsx(solution) {
     const { stdout } = await execPromise('git status --porcelain', { cwd: gitRootDir });
     const lines = stdout.split('\n').filter(Boolean);
 
-    const csxFiles = lines
-      .filter(line => line.includes('.csx'))
+    return lines
+      .filter(line => line.includes(extension))
       .map(line => {
         // Git status output format: "XY filename"
         const file = line.substring(3).trim();
 
         // Git output is relative to git root, not project root
-        const fullPath = path.join(gitRootDir, file);
-
-        return path.normalize(fullPath);
+        return path.normalize(path.join(gitRootDir, file));
       })
       .filter(file => {
-        // Only .csx files that exist and are inside this solution's componentsRoot
-        return file.endsWith('.csx') &&
+        // Only files that exist and are inside this solution's componentsRoot
+        return file.endsWith(extension) &&
                fsSync.existsSync(file) &&
                file.startsWith(rootPrefix);
       });
-
-    return csxFiles;
   } catch (error) {
     return [];
   }
+}
+
+/**
+ * Finds changed CSX files in Git that belong to ONE solution.
+ * @param {Object} solution - Solution object
+ * @returns {Promise<string[]>} Changed CSX file paths
+ */
+async function getGitChangedCsx(solution) {
+  return getGitChangedFiles(solution, '.csx');
 }
 
 /**
@@ -293,6 +299,7 @@ module.exports = {
   getCsxLocation,
   updateCodeInJson,
   processCsxFile,
+  getGitChangedFiles,
   getGitChangedCsx,
   findAllCsx
 };

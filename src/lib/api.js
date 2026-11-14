@@ -54,42 +54,106 @@ async function publishComponent(baseUrl, componentData) {
       data: response.data
     };
   } catch (error) {
-    let errorMessage = error.message;
-    let apiError = null;
+    return toFailure(error);
+  }
+}
 
-    if (error.response) {
-      const responseData = error.response.data;
+/**
+ * Turns an axios error into the CLI's failure shape, unwrapping RFC 7807
+ * Problem Details (`detail`, `title`, `errors`, `errorCode`, `traceId`).
+ * @param {Error} error - axios error
+ * @returns {{ success: false, error: string, statusCode: number|undefined, apiError: Object|null }}
+ */
+function toFailure(error) {
+  let errorMessage = error.message;
+  let apiError = null;
 
-      if (typeof responseData === 'string') {
-        errorMessage = responseData;
-      } else if (responseData && typeof responseData === 'object') {
-        // RFC 7807 Problem Details (detail + status fields)
-        if (responseData.detail) {
-          errorMessage = responseData.detail;
-          apiError = {
-            title: responseData.title,
-            detail: responseData.detail,
-            errors: responseData.errors || null,
-            errorCode: responseData.errorCode || null,
-            traceId: responseData.traceId || null,
-            type: responseData.type || null
-          };
-        } else if (responseData.error?.message) {
-          errorMessage = responseData.error.message;
-        } else if (responseData.message) {
-          errorMessage = responseData.message;
-        } else {
-          errorMessage = JSON.stringify(responseData);
-        }
+  if (error.response) {
+    const responseData = error.response.data;
+
+    if (typeof responseData === 'string') {
+      errorMessage = responseData;
+    } else if (responseData && typeof responseData === 'object') {
+      // RFC 7807 Problem Details (detail + status fields)
+      if (responseData.detail) {
+        errorMessage = responseData.detail;
+        apiError = {
+          title: responseData.title,
+          detail: responseData.detail,
+          errors: responseData.errors || null,
+          errorCode: responseData.errorCode || null,
+          traceId: responseData.traceId || null,
+          type: responseData.type || null
+        };
+      } else if (responseData.error?.message) {
+        errorMessage = responseData.error.message;
+      } else if (responseData.message) {
+        errorMessage = responseData.message;
+      } else {
+        errorMessage = JSON.stringify(responseData);
       }
     }
+  }
 
-    return {
-      success: false,
-      error: errorMessage,
-      statusCode: error.response?.status,
-      apiError
-    };
+  return {
+    success: false,
+    error: errorMessage,
+    statusCode: error.response?.status,
+    apiError
+  };
+}
+
+/**
+ * Builds the agent dry-run request
+ * (`POST api/{version}/{domain}/definitions/agents/{key}/dry-run[?version=]`).
+ * @param {Object} input
+ * @param {string} input.baseUrl - API base URL
+ * @param {string} input.apiVersion - API version (e.g. "v1")
+ * @param {string} input.domain - Domain of the agent
+ * @param {string} input.key - Agent key
+ * @param {string} [input.agentVersion] - Agent version; latest when omitted
+ * @param {string} [input.prompt] - User prompt; may use {{ data.* }}
+ * @param {Object} [input.data] - Sample instance data
+ * @param {Object[]} [input.candidates] - Decision candidates `{ key, when, whenSource }`
+ * @param {string} [input.role] - Caller role, sent as the `role` header
+ * @returns {{ url: string, body: Object, headers: Object }}
+ */
+function buildAgentDryRunRequest(input) {
+  const base = String(input.baseUrl).replace(/\/+$/, '');
+  let url = `${base}/api/${input.apiVersion}/${encodeURIComponent(input.domain)}/definitions/agents/${encodeURIComponent(input.key)}/dry-run`;
+  if (input.agentVersion) {
+    url += `?version=${encodeURIComponent(input.agentVersion)}`;
+  }
+
+  const body = { prompt: input.prompt || '', data: input.data || {} };
+  if (input.candidates && input.candidates.length > 0) {
+    body.candidates = input.candidates;
+  }
+
+  const headers = { 'accept': 'application/json', 'Content-Type': 'application/json' };
+  if (input.role) {
+    headers.role = input.role;
+  }
+
+  return { url, body, headers };
+}
+
+/**
+ * Runs an agent once on the runtime without an instance (no journal, no data
+ * write; tools answer stubs). Requires a caller role allowed by the runtime's
+ * `AiAgent:DryRun:Roles`.
+ * @param {{ url: string, body: Object, headers: Object }} request - From buildAgentDryRunRequest
+ * @returns {Promise<Object>} `{ success: true, data }` or the failure shape of toFailure
+ */
+async function dryRunAgent(request) {
+  try {
+    const response = await apiClient.post(request.url, request.body, {
+      headers: request.headers,
+      timeout: 120000
+    });
+    return { success: true, data: response.data };
+  } catch (error) {
+    return toFailure(error);
   }
 }
 
@@ -136,5 +200,7 @@ async function publishCompleted(baseUrl, version, details = {}) {
 module.exports = {
   testApiConnection,
   publishComponent,
-  publishCompleted
+  publishCompleted,
+  buildAgentDryRunRequest,
+  dryRunAgent
 };

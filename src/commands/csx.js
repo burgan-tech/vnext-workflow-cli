@@ -4,6 +4,13 @@ const path = require('path');
 const { runForEachSolution } = require('../lib/solutions');
 const { processCsxFile, getGitChangedCsx, findAllCsx } = require('../lib/csx');
 const { LOG } = require('../lib/ui');
+const {
+  findAgentFiles,
+  findAgentsReferencing,
+  findAgentsForChangedInstructions,
+  runInstructionSync,
+  formatInstructionSummary
+} = require('../lib/agentInstructions');
 
 async function csxCommand(options) {
   LOG.header('CSX UPDATE');
@@ -18,6 +25,8 @@ async function csxCommand(options) {
 
 async function csxSolution(solution, options) {
   let csxFiles = [];
+  // Agent JSONs whose instructions .md is re-inlined (only .md files agents reference)
+  let mdAgents = [];
 
   // Which CSX files to process?
   if (options.file) {
@@ -25,13 +34,23 @@ async function csxSolution(solution, options) {
     const filePath = path.isAbsolute(options.file)
       ? options.file
       : path.join(solution.projectRoot, options.file);
-    csxFiles = [filePath];
     console.log(chalk.blue(`  File: ${path.basename(filePath)}\n`));
+    if (/\.md$/i.test(filePath)) {
+      mdAgents = await findAgentsReferencing(solution, [filePath]);
+      if (mdAgents.length === 0) {
+        LOG.info('No agent references this file as its instructions — nothing to do');
+        console.log();
+        return;
+      }
+    } else {
+      csxFiles = [filePath];
+    }
   } else if (options.all) {
     // All CSX files
     const spinner = ora('  Finding all CSX files...').start();
     try {
       csxFiles = await findAllCsx(solution);
+      mdAgents = await findAgentFiles(solution);
       spinner.succeed(chalk.green(`  ${csxFiles.length} CSX files found`));
     } catch (error) {
       spinner.fail(chalk.red(`  CSX scan error: ${error.message}`));
@@ -42,9 +61,10 @@ async function csxSolution(solution, options) {
     const spinner = ora('  Finding changed CSX files in Git...').start();
     try {
       csxFiles = await getGitChangedCsx(solution);
+      mdAgents = await findAgentsForChangedInstructions(solution);
 
-      if (csxFiles.length === 0) {
-        spinner.info(chalk.yellow('  No changed CSX files in Git'));
+      if (csxFiles.length === 0 && mdAgents.length === 0) {
+        spinner.info(chalk.yellow('  No changed CSX or agent instruction files in Git'));
         console.log(chalk.green('\n  ✓ All CSX files up to date\n'));
         return;
       }
@@ -60,7 +80,9 @@ async function csxSolution(solution, options) {
   const results = { success: 0, failed: 0, errors: [] };
   const updatedFiles = [];
 
-  console.log(chalk.blue('\n  Writing CSX files to JSONs...\n'));
+  if (csxFiles.length > 0) {
+    console.log(chalk.blue('\n  Writing CSX files to JSONs...\n'));
+  }
 
   for (const csxFile of csxFiles) {
     const fileName = path.basename(csxFile);
@@ -87,15 +109,33 @@ async function csxSolution(solution, options) {
     }
   }
 
+  // Agent instruction files (.md referenced by agents)
+  let mdResults = null;
+  if (mdAgents.length > 0) {
+    console.log(chalk.blue('\n  Writing agent instructions to JSONs...\n'));
+    mdResults = runInstructionSync(mdAgents, solution, LOG);
+    results.success += mdResults.success;
+    results.failed += mdResults.failed;
+    results.errors.push(...mdResults.errors);
+  }
+
   // SUMMARY REPORT
   LOG.header('CSX UPDATE SUMMARY');
 
   // Results
   console.log(chalk.white.bold('\n  Results:\n'));
 
-  const successLabel = results.success > 0 ? chalk.green(`${results.success} success`) : chalk.dim('0 success');
-  const failedLabel = results.failed > 0 ? chalk.red(`, ${results.failed} failed`) : '';
-  console.log(`  ${chalk.cyan('CSX Files'.padEnd(16))} : ${successLabel}${failedLabel}`);
+  const csxSuccess = results.success - (mdResults ? mdResults.success : 0);
+  const csxFailed = results.failed - (mdResults ? mdResults.failed : 0);
+  if (csxFiles.length > 0) {
+    const successLabel = csxSuccess > 0 ? chalk.green(`${csxSuccess} success`) : chalk.dim('0 success');
+    const failedLabel = csxFailed > 0 ? chalk.red(`, ${csxFailed} failed`) : '';
+    console.log(`  ${chalk.cyan('CSX Files'.padEnd(16))} : ${successLabel}${failedLabel}`);
+  }
+  const mdLine = formatInstructionSummary(mdResults, chalk);
+  if (mdLine) {
+    console.log(`  ${chalk.cyan('MD Files'.padEnd(16))} : ${mdLine}`);
+  }
 
   // Updated JSON details
   if (updatedFiles.length > 0) {
@@ -118,7 +158,7 @@ async function csxSolution(solution, options) {
     console.log(chalk.red.bold('\n  ERRORS:\n'));
 
     for (const err of results.errors) {
-      console.log(chalk.red(`  [CSX] ${err.file}`));
+      console.log(chalk.red(`  [${err.type || 'CSX'}] ${err.file}`));
       console.log(chalk.dim(`    └─ ${err.error}`));
     }
   }

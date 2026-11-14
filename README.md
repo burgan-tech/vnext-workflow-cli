@@ -72,7 +72,8 @@ Every vNext workspace must have at least one **solution file** in the **project 
     "extensions": "Extensions",
     "workflows": "Workflows",
     "schemas": "Schemas",
-    "mappings": "Mappings"
+    "mappings": "Mappings",
+    "agents": "Agents"
   }
 }
 ```
@@ -90,6 +91,11 @@ Every vNext workspace must have at least one **solution file** in the **project 
 | `paths.functions` | Functions folder name under componentsRoot |
 | `paths.extensions` | Extensions folder name under componentsRoot |
 | `paths.mappings` | Mappings folder name under componentsRoot |
+| `paths.agents` | *(optional)* AI agent folder name under componentsRoot (component flow `sys-agents`). Without it the CLI behaves exactly as before |
+
+### Publish Order
+
+Folders are published in the order their keys appear under `paths`, with one exception: **agents are always published before workflows**, because an `AiAgent` state references its agent. If `paths.agents` comes after `paths.workflows`, the agents folder is moved right before the workflows folder; nothing else moves. `wf update` (git-changed files, `--folder`, `--all`) and `wf reset` apply the same rule to their file lists.
 
 ### Component Discovery
 
@@ -248,6 +254,7 @@ For every solution, checks and displays:
 - API connection status (skipped with a `wf domain add` hint when the domain has no CLI profile)
 - Database connection status
 - Component folders found
+- Agent files, when `paths.agents` is declared: JSON syntax and the component header (`key`, `version`, `flow` = `sys-agents`, `domain` = the solution domain), plus the `agent-definition` schema when the project's installed `@burgan-tech/vnext-schema` exports it. With an older package the schema step is skipped with a notice and the other checks still run. The CLI does not bundle the schema: install or upgrade `@burgan-tech/vnext-schema` in the project.
 
 ```bash
 wf check                   # every solution in the workspace
@@ -377,9 +384,32 @@ In a workspace with several solution files, `wf reset` first asks **which domain
   workflows (Workflows/)
   schemas (Schemas/)
   mappings (Mappings/)
+  agents (Agents/)       # only when paths.agents is declared
   ──────────────
   TUMU (All folders)
 ```
+
+---
+
+### `wf agent dry-run <key>`
+
+**Purpose**: Run an AI agent (`sys-agents`) once on the runtime against sample data, without an instance — no journal, no session, no data write; every tool answers a stub. Wraps `POST api/{API_VERSION}/{domain}/definitions/agents/{key}/dry-run`.
+
+```bash
+wf agent dry-run ai-triage-agent --data sample.json --prompt "<message>{{ data.message }}</message>" --role admin
+wf agent dry-run ai-triage-agent --data sample.json --prompt-file prompt.txt --candidates candidates.json --domain core
+```
+
+| Option | Description |
+|--------|-------------|
+| `--data <file>` | *(required)* JSON object with the sample instance data |
+| `--prompt <text>` / `--prompt-file <file>` | User prompt; may use `{{ data.* }}` |
+| `--candidates <file>` | JSON array of decision candidates `{ key, when, whenSource }`; without it the agent runs without a decision |
+| `--agent-version <version>` | Agent version (default: latest). Not `--version`, which prints the CLI version |
+| `--role <role>` | Caller role, sent as the `role` header |
+| `--json` | Print the raw response JSON |
+
+Uses the CLI profile of `--domain`, or the active domain. Prints status, decision, output, tool calls and token usage; on failure prints the runtime's error (HTTP status, detail, error code, trace id) and exits with code 1. The runtime allows dry-runs only for the caller roles in `AiAgent:DryRun:Roles`; with that list empty every call returns `403 forbidden.Agent:100004`.
 
 ---
 
@@ -399,10 +429,13 @@ In a workspace with several solution files, `wf reset` first asks **which domain
 wf csx                       # Process changed files in Git, every solution
 wf csx --all                 # Process all CSX files
 wf csx --file x.csx          # Process a single file
+wf csx --file instructions/refund.md   # Re-inline one agent instructions file
 wf csx --domain partner      # Only the "partner" solution
 ```
 
 `csx` does not need a CLI domain profile, so it also runs for solutions whose domain has no profile yet.
+
+**Agent instruction files (`.md`)**: an agent (`paths.agents`) may keep its system prompt in a file, `"instructions": { "location": "./instructions/refund.md", "encoding": "B64" }`. `wf csx`, `wf sync` and `wf update` re-inline that file into `instructions.code` before publishing (the runtime reads only `code`), honouring `encoding` (`NAT` plain text, `B64`/absent base64). Only `.md` files an agent references are read — README, CHANGELOG and docs are never touched. The location is relative to the agent JSON and must stay inside `componentsRoot`. The JSON is rewritten only when the text changed; like vnext-forge, CRLF/LF and trailing-newline differences do not count. A referenced file that does not exist fails that agent, which is then not published (`wf check` reports it too). `wf csx --file <path>.md` re-inlines one file into every agent that references it. Summaries show an `MD` line.
 
 ---
 

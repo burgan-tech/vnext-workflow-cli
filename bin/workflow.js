@@ -11,6 +11,7 @@ const syncCommand = require('../src/commands/sync');
 const resetCommand = require('../src/commands/reset');
 const configCommand = require('../src/commands/config');
 const domainCommand = require('../src/commands/domain');
+const { agentDryRunCommand } = require('../src/commands/agent');
 
 program
   .name('workflow')
@@ -45,9 +46,15 @@ program
 // CSX command
 program
   .command('csx')
-  .description('Update CSX files')
-  .option('-a, --all', 'Update all CSX files')
-  .option('-f, --file <path>', 'Update a specific CSX file')
+  .description('Update CSX files (and agent instruction .md files) in component JSONs')
+  .option('-a, --all', 'Update all CSX files and agent instruction files')
+  .option('-f, --file <path>', 'Update a specific CSX file, or an agent instructions .md file')
+  .addHelpText('after', `
+Agent instruction files:
+  An agent whose attributes.instructions.location ends in .md gets that file
+  re-inlined into instructions.code (NAT plain, B64/absent base64). Only .md
+  files referenced by agents are read; sync and update do the same before publishing.
+`)
   .action(csxCommand);
 
 // Update command
@@ -90,6 +97,29 @@ program.command('indexes').description('Generate DBA-reviewed attribute index SQ
   .option('-o, --output <directory>', 'Parent folder for a new immutable SQL batch', 'index-sql')
   .option('--retire-obsolete', 'Retire obsolete projections; requires ALL active workflow versions locally')
   .action(require('../src/commands/indexes'));
+
+// Agent commands
+program
+  .command('agent')
+  .description('AI agent (sys-agents) tools')
+  .command('dry-run')
+  .description('Run an agent once on the runtime against sample data, without an instance')
+  .argument('<key>', 'Agent key')
+  .requiredOption('--data <file>', 'JSON file with the sample instance data')
+  .option('--prompt <text>', 'User prompt; may use {{ data.* }}')
+  .option('--prompt-file <file>', 'Read the user prompt from a file')
+  .option('--candidates <file>', 'JSON file with decision candidates [{ key, when, whenSource }]')
+  .option('--agent-version <version>', 'Agent version (default: latest)')
+  .option('--role <role>', 'Caller role, sent as the "role" header (must be in AiAgent:DryRun:Roles)')
+  .option('--json', 'Print the raw response JSON')
+  .addHelpText('after', `
+Uses the CLI profile of --domain, or the active domain.
+
+Examples:
+  wf agent dry-run ai-triage-agent --data sample.json --prompt "<message>{{ data.message }}</message>" --role admin
+  wf agent dry-run ai-triage-agent --data sample.json --prompt-file prompt.txt --candidates candidates.json --domain core
+`)
+  .action(agentDryRunCommand);
 
 // Config command
 program

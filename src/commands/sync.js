@@ -9,6 +9,7 @@ const { getInstanceId, deleteWorkflow } = require('../lib/db');
 const { getJsonMetadata, detectComponentType, checkComponentDomain } = require('../lib/workflow');
 const { processCsxFile, findAllCsx } = require('../lib/csx');
 const { LOG, printApiError, printErrorSummaryTable } = require('../lib/ui');
+const { findAgentFiles, runInstructionSync, formatInstructionSummary } = require('../lib/agentInstructions');
 
 async function syncCommand(options) {
   LOG.header('SYSTEM SYNC - Add Missing Components');
@@ -76,6 +77,14 @@ async function syncSolution(solution) {
     }
   }
 
+  // Agent instruction files: re-inline every .md an agent references
+  const agentFiles = await findAgentFiles(solution);
+  let mdResults = runInstructionSync([], solution, LOG);
+  if (agentFiles.length > 0) {
+    console.log(chalk.blue('\n  Writing agent instructions to JSONs...\n'));
+    mdResults = runInstructionSync(agentFiles, solution, LOG);
+  }
+
   // Find all JSON files
   const findSpinner = ora('Finding JSON files...').start();
   let allJsonFiles;
@@ -99,6 +108,13 @@ async function syncSolution(solution) {
     // Initialize stats
     if (!componentStats[type]) {
       componentStats[type] = { success: 0, failed: 0, skipped: 0, existing: 0 };
+    }
+
+    // An agent whose instructions file is missing would publish stale instructions
+    if (mdResults.blocked.has(path.resolve(jsonPath))) {
+      LOG.component(type, fileName, 'error', 'not published: instructions file missing');
+      componentStats[type].failed++;
+      continue;
     }
 
     try {
@@ -201,10 +217,17 @@ async function syncSolution(solution) {
     console.log(`  ${chalk.cyan('CSX'.padEnd(12))} : ${csxSuccessLabel}${csxFailedLabel}`);
   }
 
+  const mdLine = formatInstructionSummary(mdResults, chalk);
+  if (mdLine) {
+    if (csxFiles.length === 0) console.log();
+    console.log(`  ${chalk.cyan('MD'.padEnd(12))} : ${mdLine}`);
+  }
+
   // Errors
   const allErrors = [
     ...errors,
-    ...csxResults.errors.map(e => ({ type: 'CSX', file: e.file, error: e.error }))
+    ...csxResults.errors.map(e => ({ type: 'CSX', file: e.file, error: e.error })),
+    ...mdResults.errors
   ];
   if (allErrors.length > 0) {
     console.log();
@@ -215,6 +238,7 @@ async function syncSolution(solution) {
   LOG.separator();
 
   const totalFailed = Object.values(componentStats).reduce((sum, s) => sum + s.failed, 0) + csxResults.failed;
+  // Missing instruction files are already counted: their agents are failed components
 
   if (totalSuccess === 0 && totalFailed === 0) {
     console.log(chalk.green.bold('\n  ✓ System up to date - All records exist\n'));
@@ -224,7 +248,7 @@ async function syncSolution(solution) {
     console.log(chalk.yellow.bold(`\n  ⚠ Sync completed (${totalFailed} errors)\n`));
   }
 
-  return { success: totalSuccess + csxResults.success, failed: totalFailed, errors: allErrors };
+  return { success: totalSuccess + csxResults.success + mdResults.success, failed: totalFailed, errors: allErrors };
 }
 
 module.exports = syncCommand;
